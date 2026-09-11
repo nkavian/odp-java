@@ -4,8 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.offeringprotocol.odp.core.OdpJson;
 import org.offeringprotocol.odp.core.ServiceDocument;
 
 class DirectoryClientTest {
@@ -23,6 +25,24 @@ class DirectoryClientTest {
     @Test
     void rejectsInvalidSearchLimitsBeforeTransport() {
         assertThrows(IllegalArgumentException.class, () -> new DirectoryModels.SearchRequest("plants", null, 101));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new DirectoryModels.ServiceFilters(
+                        null, null, null, null, List.of(new ServiceDocument.TrustProtocol("mpp"))));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new DirectoryModels.ServiceFilters(null, null, null, null, List.of()));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new DirectoryModels.ServiceFilters(null, null, null, null, Collections.singletonList(null)));
+    }
+
+    @Test
+    void omitsUnusedFiltersFromRequests() {
+        DirectoryModels.ServiceFilters filters = new DirectoryModels.ServiceFilters(
+                null, List.of("gpu"), null, null, List.of(new ServiceDocument.TrustProtocol("tap")));
+
+        assertEquals("{\"keywords\":[\"gpu\"],\"trust\":[{\"name\":\"tap\"}]}", OdpJson.write(filters));
     }
 
     @Test
@@ -52,5 +72,21 @@ class DirectoryClientTest {
         assertEquals(1, protocols.payments().size());
         assertNull(protocols.enrollment());
         assertNull(page.items().get(1).protocols());
+    }
+
+    @Test
+    void decodesTypedTrustFacets() {
+        DirectoryModels.SearchPage page = DirectoryClient.decodeSearchPage("""
+                {"items":[],"facets":{"trust":[{"value":{"name":"tap"},"count":2}]}}
+                """);
+
+        assertEquals(
+                List.of(new DirectoryModels.Facet<>(new ServiceDocument.TrustProtocol("tap"), 2)),
+                page.facets().trust());
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DirectoryClient.decodeSearchPage(
+                        "{\"items\":[],\"facets\":{\"trust\":[{\"value\":{\"name\":\"mpp\"},\"count\":2}]}}"));
     }
 }

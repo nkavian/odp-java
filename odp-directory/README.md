@@ -50,8 +50,8 @@ either InFlow or Solana through MPP. A payment filter with no options matches an
 advertises that payment protocol.
 
 The response includes structured facets for enrollment protocols, keywords, operations, payment
-protocols, and payment options. Use them to refine a user or Agent query without downloading a
-global vocabulary.
+protocols, payment options, and trust protocols. Use them to refine a user or Agent query without
+downloading a global vocabulary.
 
 Compatible results may advertise protocol names unknown to this library. The client filters those
 descriptors and preserves recognized enrollment, payment, and trust descriptors, including TAP.

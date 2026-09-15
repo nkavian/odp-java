@@ -178,7 +178,14 @@ public final class DirectoryClient {
             if (value == null) {
                 throw new IllegalArgumentException("Directory response is empty");
             }
-            return OdpJson.treeToValue(value, DirectoryModels.SearchPage.class);
+            DirectoryModels.SearchPage page = OdpJson.treeToValue(value, DirectoryModels.SearchPage.class);
+            if (page.facets() != null
+                    && page.facets().trust().stream()
+                            .anyMatch(facet -> facet.value() == null
+                                    || !"tap".equals(facet.value().name()))) {
+                throw new IllegalArgumentException("Directory trust facets are invalid");
+            }
+            return page;
         } catch (IllegalArgumentException exception) {
             throw new IllegalArgumentException("Directory response is invalid", exception);
         }

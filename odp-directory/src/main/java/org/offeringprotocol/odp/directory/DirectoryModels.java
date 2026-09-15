@@ -2,6 +2,7 @@ package org.offeringprotocol.odp.directory;
 
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Instant;
 import java.util.Collections;
@@ -24,16 +25,33 @@ public interface DirectoryModels {
         }
     }
 
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
     public record ServiceFilters(
             List<ServiceDocument.EnrollmentProtocol> enrollment,
             List<String> keywords,
             List<OperationFilter> operations,
-            List<PaymentFilter> payments) {
+            List<PaymentFilter> payments,
+            List<ServiceDocument.TrustProtocol> trust) {
+        public ServiceFilters(
+                List<ServiceDocument.EnrollmentProtocol> enrollment,
+                List<String> keywords,
+                List<OperationFilter> operations,
+                List<PaymentFilter> payments) {
+            this(enrollment, keywords, operations, payments, null);
+        }
+
         public ServiceFilters {
+            if (trust != null
+                    && (trust.size() != 1
+                            || trust.get(0) == null
+                            || !"tap".equals(trust.get(0).name()))) {
+                throw new IllegalArgumentException("trust must contain exactly one tap descriptor");
+            }
             enrollment = enrollment == null ? List.of() : List.copyOf(enrollment);
             keywords = keywords == null ? List.of() : List.copyOf(keywords);
             operations = operations == null ? List.of() : List.copyOf(operations);
             payments = payments == null ? List.of() : List.copyOf(payments);
+            trust = trust == null ? List.of() : List.copyOf(trust);
         }
     }
 
@@ -77,13 +95,24 @@ public interface DirectoryModels {
             List<Facet<String>> keywords,
             List<Facet<OperationDescriptor>> operations,
             List<Facet<ServiceDocument.PaymentProtocol>> payments,
-            @JsonProperty("payment_options") List<Facet<PaymentOptionFacetValue>> paymentOptions) {
+            @JsonProperty("payment_options") List<Facet<PaymentOptionFacetValue>> paymentOptions,
+            List<Facet<ServiceDocument.TrustProtocol>> trust) {
+        public Facets(
+                List<Facet<ServiceDocument.EnrollmentProtocol>> enrollment,
+                List<Facet<String>> keywords,
+                List<Facet<OperationDescriptor>> operations,
+                List<Facet<ServiceDocument.PaymentProtocol>> payments,
+                List<Facet<PaymentOptionFacetValue>> paymentOptions) {
+            this(enrollment, keywords, operations, payments, paymentOptions, null);
+        }
+
         public Facets {
             enrollment = enrollment == null ? List.of() : List.copyOf(enrollment);
             keywords = keywords == null ? List.of() : List.copyOf(keywords);
             operations = operations == null ? List.of() : List.copyOf(operations);
             payments = payments == null ? List.of() : List.copyOf(payments);
             paymentOptions = paymentOptions == null ? List.of() : List.copyOf(paymentOptions);
+            trust = trust == null ? List.of() : List.copyOf(trust);
         }
     }
 

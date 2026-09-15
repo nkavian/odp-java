@@ -10,6 +10,42 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class OdpJsonTest {
+    @Test
+    void rejectsUnsupportedAndMalformedProtocolVersions() {
+        String offering = "{\"odp_version\":\"1.0\",\"id\":\"desk\",\"name\":\"Desk\"}";
+        assertEquals("1.0", OdpJson.parseOffering(offering).odpVersion());
+        for (String version : List.of("1.1", "1.7", "1.999999999999999999999999999999")) {
+            assertEquals(
+                    version,
+                    OdpJson.parseOffering(offering.replace("1.0", version)).odpVersion());
+        }
+        for (String version : List.of("2.0", "3.0", "1", "01.0", "1.01", "1.0.0", "1.7\\n")) {
+            assertThrows(
+                    OdpValidationException.class,
+                    () -> OdpJson.parseOffering(offering.replace("1.0", version)),
+                    version);
+        }
+    }
+
+    @Test
+    void rejectsNumericPricesBeforePageDeserialization() {
+        String page = """
+                {"odp_version":"1.0","items":[{"id":"desk","name":"Desk",
+                "price":{"type":"fixed","amount":1450,"currency":"USD"}}]}
+                """;
+        assertThrows(OdpValidationException.class, () -> OdpJson.parseOfferingSearchResponse(page));
+        assertThrows(
+                OdpValidationException.class,
+                () -> OdpJson.parsePage(page, org.offeringprotocol.odp.core.Offering.class));
+        assertEquals(
+                "1450",
+                OdpJson.parsePage(page.replace(":1450", ":\"1450\""), org.offeringprotocol.odp.core.Offering.class)
+                        .items()
+                        .get(0)
+                        .price()
+                        .amount());
+    }
+
     private static final String DOCUMENT = """
             {
               "odp_version":"1.0",
@@ -33,6 +69,36 @@ class OdpJsonTest {
         assertEquals("Example Service", document.name());
         assertTrue(document.additional().containsKey("example_extension"));
         assertTrue(OdpJson.write(document).contains("example_extension"));
+    }
+
+    @Test
+    void acceptsCompatibleVersionsAcrossDocumentTypes() {
+        for (String version : List.of("1.1", "1.7")) {
+            assertEquals(
+                    version,
+                    OdpJson.parseServiceDocument(DOCUMENT.replace("1.0", version))
+                            .odpVersion());
+            assertEquals(
+                    version,
+                    OdpJson.parseCollection("{\"odp_version\":\"" + version + "\",\"id\":\"desks\",\"name\":\"Desks\"}")
+                            .odpVersion());
+            assertEquals(
+                    version,
+                    OdpJson.parseOfferingSearchRequest("{\"odp_version\":\"" + version + "\",\"query\":\"desk\"}")
+                            .odpVersion());
+            assertEquals(
+                    version,
+                    OdpJson.parsePage(
+                                    "{\"odp_version\":\"" + version
+                                            + "\",\"items\":[{\"id\":\"desk\",\"name\":\"Desk\"}]}",
+                                    Offering.class)
+                            .odpVersion());
+        }
+        assertEquals(
+                "1.0",
+                ServiceDocument.builder("Example", "Example Service", "en", new ServiceDocument.Http("/odp", null))
+                        .build()
+                        .odpVersion());
     }
 
     @Test
@@ -89,6 +155,22 @@ class OdpJsonTest {
         assertEquals(
                 List.of(new ServiceDocument.TrustProtocol("tap")),
                 document.protocols().trust());
+    }
+
+    @Test
+    void rejectsInvalidFilterSemanticsWithoutDiscardingTheAgentServiceDocument() {
+        for (String definition : List.of(
+                "{\"id\":\"material\",\"title\":\"Material\",\"description\":\"Material\",\"type\":\"string\",\"operators\":[\"gte\"]}",
+                "{\"id\":\"available\",\"title\":\"Available\",\"description\":\"Available\",\"type\":\"boolean\",\"operators\":[\"eq\"],\"unit\":{\"system\":\"ucum\",\"code\":\"1\"}}")) {
+            OdpJsonNode node = OdpJson.parseTree(DOCUMENT);
+            node.set(
+                    "operations",
+                    OdpJson.parseTree(
+                            "[{\"name\":\"get-offering\",\"authentication\":\"not-required\"},{\"name\":\"list-offerings\",\"authentication\":\"not-required\"},{\"name\":\"search-offerings\",\"authentication\":\"not-required\"}]"));
+            node.set("search_capabilities", OdpJson.parseTree("{\"filters\":{\"inline\":[" + definition + "]}}"));
+            assertThrows(OdpValidationException.class, () -> OdpJson.parseServiceDocument(node.toString()));
+            assertNull(OdpJson.parseAgentServiceDocument(node.toString()).searchCapabilities());
+        }
     }
 
     @Test

@@ -12,6 +12,7 @@ import java.util.Set;
 import org.offeringprotocol.odp.core.OdpJson;
 import org.offeringprotocol.odp.core.OdpJsonNode;
 import org.offeringprotocol.odp.core.OdpJsonSchema;
+import org.offeringprotocol.odp.core.OdpResponseLimitException;
 
 final class AttributeSchemaResolver {
     private static final String DIALECT = "https://json-schema.org/draft/2020-12/schema";
@@ -45,17 +46,17 @@ final class AttributeSchemaResolver {
             return;
         }
         if (graph.documents.size() >= MAXIMUM_DOCUMENTS) {
-            throw new IllegalStateException("ODP Attribute Schema graph exceeds 16 documents");
+            throw new OdpResponseLimitException("ODP Attribute Schema graph exceeds 16 documents");
         }
         if (depth > MAXIMUM_DEPTH) {
-            throw new IllegalStateException("ODP Attribute Schema graph exceeds eight reference levels");
+            throw new OdpResponseLimitException("ODP Attribute Schema graph exceeds eight reference levels");
         }
         OdpJsonNode document = client.get(
                 target, "application/schema+json", Set.of("application/schema+json"), MAXIMUM_DOCUMENT_BYTES, 16);
         requireSchema(document);
         graph.bytes += document.toString().getBytes(StandardCharsets.UTF_8).length;
         if (graph.bytes > MAXIMUM_GRAPH_BYTES) {
-            throw new IllegalStateException("ODP Attribute Schema graph exceeds its byte limit");
+            throw new OdpResponseLimitException("ODP Attribute Schema graph exceeds its byte limit");
         }
         graph.documents.put(target, document);
         for (URI external : externalReferences(document, target)) {

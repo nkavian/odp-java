@@ -19,6 +19,11 @@ public record OfferingPage(
         additional = Copies.nodes(additional);
     }
 
+    /** Item pagination without the initial search response's refinement groups. */
+    public Page<Offering> asPage() {
+        return new Page<>(authExpands, odpVersion, items, next, additional);
+    }
+
     public record RefinementGroup(@JsonProperty("filter_id") String filterId, List<RefinementBucket> values) {
         public RefinementGroup {
             values = List.copyOf(values);

@@ -207,13 +207,16 @@ public interface DirectoryModels {
         }
     }
 
+    /** Usable search results and issues for rejected entries, indexed by their position in the response. */
     public record SearchPage(
             List<Service> items,
             String next,
             Facets facets,
+            List<Issue> issues,
             @JsonAnySetter @JsonAnyGetter Map<String, OdpJsonNode> additional) {
         public SearchPage {
             items = items == null ? List.of() : List.copyOf(items);
+            issues = issues == null ? List.of() : List.copyOf(issues);
             additional = additional == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(additional));
         }
     }

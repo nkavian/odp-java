@@ -22,6 +22,10 @@ and does not select a JSON library or application framework.
 `OdpJson` validates incoming JSON against the exact ODP schemas bundled in the published JAR before
 decoding it into immutable Java models.
 
+SDK-generated requests and Service Document builders use protocol version `1.0`. Incoming `1.x`
+documents are validated using the `1.0` schemas. Parsed models retain the received version.
+Unsupported major versions and malformed version strings are rejected.
+
 ```java
 try {
     ServiceDocument document = OdpJson.parseServiceDocument(responseBody);
@@ -90,12 +94,43 @@ loader:
 Page<Offering> first = client.listOfferings("terse", 25, "en");
 List<Offering> offerings = OdpPagination.items(
         first,
-        next -> client.continueOfferings(next, "en"));
+        next -> client.continueOfferings(next, "terse", "en"));
 ```
 
-`OdpPagination` detects continuation loops and limits one traversal to 16 pages. Applications that
-need independent cancellation, streaming, or a lower result ceiling can follow pages directly and
-stop before invoking the next loader.
+For incremental consumption, use a synchronous, single-use iterator:
+
+```java
+Iterator<Offering> offerings = OdpPagination.iterate(
+        () -> client.listOfferings("terse", 25, "en"),
+        next -> client.continueOfferings(next, "terse", "en"),
+        100);
+while (offerings.hasNext()) {
+    consume(offerings.next());
+}
+```
+
+The first page is fetched on the first `hasNext()` or `next()` call. Further pages are fetched only
+when needed. The final argument limits total items, independently of the Service page size; zero
+performs no requests. Stop calling the iterator to stop fetching. A failed page terminates the
+traversal without losing items already delivered; subsequent calls rethrow that failure without
+another request. Response limits throw `OdpResponseLimitException` directly, with code
+`RESPONSE_LIMIT_EXCEEDED` and `retryable()` set to `false`. Other loader failures are retained as the cause of an
+`IllegalStateException`. Iterators are not thread-safe. Applications own any asynchronous wrapping.
+
+Both helpers detect continuation loops and enforce a local maximum of 16 pages per traversal.
+Applications following explicit pages can choose their own traversal bounds.
+
+## Search validation
+
+`SearchCatalog` accepts the effective Filter and Sort definitions for one search scope and exposes
+indexed definitions, with each Sort's Filter references resolved. `validateRequest` checks Filter
+operators and typed values, Sort availability, and refinable identifiers. `validateRefinements`
+checks the returned groups against the request and returns groups paired with their Filter
+Definitions. Decimal equality is numeric; date-time equality compares instants.
+
+This class performs no network or database work. The Agent module resolves inline and linked
+sources. A Service supplies definitions from its own catalog and remains responsible for executing
+queries and computing accurate refinement counts.
 
 ## Payment option vocabulary
 

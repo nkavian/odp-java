@@ -101,6 +101,33 @@ downloading a global vocabulary.
 Compatible results may advertise protocol names unknown to this library. The client filters those
 descriptors and preserves recognized enrollment, payment, and trust descriptors, including TAP.
 
+## What the client checks in a result
+
+A directory result is a third party's description of somebody else's Service, and an Agent connects
+to whatever `service_origin` names, so each result is checked before it is handed over:
+
+- `service_origin` must be the ASCII serialization of a secure origin — `https`, a lowercase host,
+  no port, path, query, fragment, or user information — naming a destination the public internet
+  routes. An address in the IANA special-purpose registries is refused, including the IPv6
+  transition ranges that embed an IPv4 address.
+- The rest of the result is held to the shape of the Service Document it summarizes.
+- `branding`, `http`, `odp_version`, `payment_origins`, and `search_capabilities` are
+  removed. A directory summarizes a Service; it does not serve the Service's own document, so these
+  are not passed on as though the Agent had retrieved them. Retrieve them from the Service with
+  [`odp-agent`](../odp-agent/README.md).
+- `mcp` metadata is preserved in `additional()` for display and inspection. Confirm connection
+  details against the live Service Document before using an endpoint.
+
+One unusable result does not discard the page it arrived on. It is dropped from `page.items()` and
+reported in `page.issues()`, whose `index` is the result's position in the page as the directory
+sent it:
+
+```java
+for (DirectoryModels.Issue issue : page.issues()) {
+    System.out.printf("result %d was dropped: %s%n", issue.index(), issue.message());
+}
+```
+
 ## Continue a search
 
 One call returns one page. When `page.next()` is non-null, submit that opaque value unchanged:
@@ -112,8 +139,10 @@ while (page.next() != null) {
 }
 ```
 
-The client retrieves continuations with GET, keeps them on the selected canonical origin, limits
-redirects to five, and bounds response bodies. Applications should impose their own total page and
+The client retrieves continuations with GET, keeps them on the selected canonical origin (a
+written-out default port still matches), limits redirects to five, and bounds response bodies —
+524,288 bytes for a success and 16,384 for an error or redirect, enforced while reading rather
+than after buffering an unlimited response. Applications should impose their own total page and
 item limit when following multiple pages.
 
 ## Suggestions
@@ -168,9 +197,11 @@ The client does not persist or cache directory responses.
 ## Errors
 
 Non-success HTTP responses throw `DirectoryRequestException`, which preserves the status and
-response headers. Invalid arguments and malformed successful responses use
-`IllegalArgumentException`; transport, interruption, redirect, and response-boundary failures use
-`IllegalStateException`.
+response headers. Its message describes the request that failed; it quotes the response only when
+that response is a JSON error document, and then only its `detail`, `title`, or `message` member,
+flattened and truncated so an error body cannot forge a log line. Invalid arguments and malformed
+successful responses use `IllegalArgumentException`; transport, interruption, redirect, and
+response-boundary failures use `IllegalStateException`.
 
 ## Related documentation
 

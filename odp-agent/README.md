@@ -138,6 +138,10 @@ documents into the returned schema, and validates full Offering attributes. `$dy
 to fragment references such as `#node`. An unavailable, unsupported, or non-matching schema removes
 only the uninterpretable attributes and produces a scoped issue; the Offering remains usable.
 
+Attribute Schema processing is limited to 256 KiB per document, 16 documents, eight reference
+levels, and one MiB for the complete graph. Each Attribute Schema request has a 30-second timeout
+and accepts at most 16 JSON nesting levels. These are fixed SDK safety ceilings.
+
 Actions are normalized to absolute compact HTTP or OpenAPI targets. Resolve the supporting document
 for one explicitly selected Action without invoking it:
 
@@ -152,7 +156,8 @@ if (action.requestSchema() != null) {
 ```
 
 Compact HTTP request schemas follow the same bounded resolution rules as Attribute Schemas. OpenAPI
-targets require a JSON OpenAPI 3.1 document containing exactly one matching `operationId`.
+targets require a JSON OpenAPI 3.1 document containing exactly one matching `operationId`; each
+OpenAPI document is limited to one MiB and 32 JSON nesting levels.
 
 ## Continue a response
 

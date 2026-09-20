@@ -8,8 +8,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import org.offeringprotocol.odp.core.OdpJson;
 import org.offeringprotocol.odp.core.OdpJsonNode;
@@ -17,6 +19,8 @@ import org.offeringprotocol.odp.core.ServiceDocument;
 
 /** Client for the canonical ODP directory. */
 public final class DirectoryClient {
+    private static final String METHOD_GET = "GET";
+    private static final String METHOD_POST = "POST";
     private static final int MAXIMUM_BYTES = 524_288;
     private static final int MAXIMUM_REDIRECTS = 5;
     private final DirectoryEnvironment selectedEnvironment;
@@ -47,27 +51,59 @@ public final class DirectoryClient {
         return selectedEnvironment;
     }
 
+    public DirectoryModels.SearchResponse search(DirectoryModels.ResourceSearchRequest request) {
+        Objects.requireNonNull(request, "request");
+        return DirectoryResults.decode(
+                send(selectedEnvironment.origin().resolve("/v1/directory/search"), METHOD_POST, encode(request)));
+    }
+
+    public DirectoryModels.SearchResponse continueSearch(String next) {
+        return DirectoryResults.decode(send(resolveContinuation(next), METHOD_GET, null));
+    }
+
     public DirectoryModels.SearchPage searchServices(DirectoryModels.SearchRequest request) {
         Objects.requireNonNull(request, "request");
         return decodeSearchPage(
-                send(selectedEnvironment.origin().resolve("/v1/services/search"), "POST", encode(request)));
+                send(selectedEnvironment.origin().resolve("/v1/services/search"), METHOD_POST, encode(request)));
     }
 
     public DirectoryModels.SearchPage continueSearchServices(String next) {
         URI uri = resolveContinuation(next);
-        return decodeSearchPage(send(uri, "GET", null));
+        return decodeSearchPage(send(uri, METHOD_GET, null));
     }
 
     public List<String> suggestServices(String prefix, Integer limit) {
+        return suggestions("/v1/services/suggestions", prefix, limit, null, false);
+    }
+
+    public List<String> suggest(String prefix, Integer limit) {
+        return suggest(prefix, limit, null);
+    }
+
+    public List<String> suggest(String prefix, Integer limit, DirectoryModels.ServiceFilters filters) {
+        return suggestions("/v1/directory/suggestions", prefix, limit, filters, true);
+    }
+
+    private List<String> suggestions(
+            String path, String prefix, Integer limit, DirectoryModels.ServiceFilters filters, boolean mixed) {
         if (prefix == null || prefix.isBlank() || prefix.length() > 128) {
             throw new IllegalArgumentException("prefix must contain from 1 through 128 characters");
         }
         if (limit != null && (limit < 1 || limit > 25)) {
             throw new IllegalArgumentException("limit must be from 1 through 25");
         }
-        String query = "?prefix=" + URLEncoder.encode(prefix, StandardCharsets.UTF_8)
-                + (limit == null ? "" : "&limit=" + limit);
-        String json = send(selectedEnvironment.origin().resolve("/v1/services/suggestions" + query), "GET", null);
+        String json;
+        if (mixed) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("prefix", prefix);
+            if (limit != null) body.put("limit", limit);
+            if (filters != null) body.put("filters", filters);
+            json = send(selectedEnvironment.origin().resolve(path), METHOD_POST, encode(body));
+        } else {
+            String query = "?prefix=" + URLEncoder.encode(prefix, StandardCharsets.UTF_8)
+                    + (limit == null ? "" : "&limit=" + limit);
+            json = send(selectedEnvironment.origin().resolve(path + query), METHOD_GET, null);
+        }
         try {
             return OdpJson.read(json, DirectoryModels.Suggestions.class).items();
         } catch (IllegalArgumentException exception) {
@@ -111,7 +147,7 @@ public final class DirectoryClient {
                     .orElseThrow(() -> new IllegalStateException("Directory redirect omitted Location"));
             current = requireDirectoryOrigin(current.resolve(location));
             if (status == 303 || ((status == 301 || status == 302) && "POST".equals(currentMethod))) {
-                currentMethod = "GET";
+                currentMethod = METHOD_GET;
                 hasBody = false;
             }
         }
@@ -179,15 +215,19 @@ public final class DirectoryClient {
                 throw new IllegalArgumentException("Directory response is empty");
             }
             DirectoryModels.SearchPage page = OdpJson.treeToValue(value, DirectoryModels.SearchPage.class);
-            if (page.facets() != null
-                    && page.facets().trust().stream()
-                            .anyMatch(facet -> facet.value() == null
-                                    || !"tap".equals(facet.value().name()))) {
-                throw new IllegalArgumentException("Directory trust facets are invalid");
-            }
+            validateFacets(page.facets());
             return page;
         } catch (IllegalArgumentException exception) {
             throw new IllegalArgumentException("Directory response is invalid", exception);
+        }
+    }
+
+    static void validateFacets(DirectoryModels.Facets facets) {
+        if (facets != null
+                && facets.trust().stream()
+                        .anyMatch(facet -> facet.value() == null
+                                || !"tap".equals(facet.value().name()))) {
+            throw new IllegalArgumentException("Directory trust facets are invalid");
         }
     }
 

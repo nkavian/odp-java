@@ -4,17 +4,21 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.offeringprotocol.odp.core.OdpJson;
 import org.offeringprotocol.odp.core.OdpJsonNode;
+import org.offeringprotocol.odp.core.OdpMediaType;
 import org.offeringprotocol.odp.core.ServiceDocument;
 
 /** Client for the canonical ODP directory. */
@@ -22,7 +26,26 @@ public final class DirectoryClient {
     private static final String METHOD_GET = "GET";
     private static final String METHOD_POST = "POST";
     private static final int MAXIMUM_BYTES = 524_288;
+    /** A failure message travels into logs, so an error body is read and quoted far more tightly. */
+    private static final int MAXIMUM_ERROR_BYTES = 16_384;
+
+    private static final int MAXIMUM_ERROR_CHARACTERS = 2_048;
     private static final int MAXIMUM_REDIRECTS = 5;
+    private static final int MAXIMUM_SUGGESTIONS = 25;
+    private static final int MAXIMUM_SUGGESTION_CHARACTERS = 128;
+    private static final int MAXIMUM_CONTINUATION_CHARACTERS = 2_048;
+    private static final String JSON = "application/json";
+    private static final String BAD_PAGE = "Directory response is invalid";
+    private static final String BAD_SUGGESTIONS = "Directory suggestions response is invalid";
+
+    /**
+     * Members a Service Document carries but a directory cannot vouch for. A directory summarizes a
+     * Service; it does not serve the Service's own document, so these are dropped rather than
+     * passed on as though the Agent had retrieved them.
+     */
+    private static final List<String> UNVERIFIED =
+            List.of("branding", "http", "odp_version", "payment_origins", "search_capabilities");
+
     private final DirectoryEnvironment selectedEnvironment;
     private final HttpClient httpClient;
 
@@ -86,10 +109,10 @@ public final class DirectoryClient {
 
     private List<String> suggestions(
             String path, String prefix, Integer limit, DirectoryModels.ServiceFilters filters, boolean mixed) {
-        if (prefix == null || prefix.isBlank() || prefix.length() > 128) {
+        if (prefix == null || prefix.isBlank() || prefix.length() > MAXIMUM_SUGGESTION_CHARACTERS) {
             throw new IllegalArgumentException("prefix must contain from 1 through 128 characters");
         }
-        if (limit != null && (limit < 1 || limit > 25)) {
+        if (limit != null && (limit < 1 || limit > MAXIMUM_SUGGESTIONS)) {
             throw new IllegalArgumentException("limit must be from 1 through 25");
         }
         String json;
@@ -104,11 +127,7 @@ public final class DirectoryClient {
                     + (limit == null ? "" : "&limit=" + limit);
             json = send(selectedEnvironment.origin().resolve(path + query), METHOD_GET, null);
         }
-        try {
-            return OdpJson.read(json, DirectoryModels.Suggestions.class).items();
-        } catch (IllegalArgumentException exception) {
-            throw new IllegalArgumentException("Directory suggestions response is invalid", exception);
-        }
+        return decodeSuggestions(json, limit == null ? MAXIMUM_SUGGESTIONS : limit);
     }
 
     private String send(URI uri, String method, String body) {
@@ -116,19 +135,19 @@ public final class DirectoryClient {
         String currentMethod = method;
         String currentBody = body;
         boolean hasBody = body != null;
-        for (int redirects = 0; redirects <= MAXIMUM_REDIRECTS; redirects++) {
+        for (int redirects = 0; ; redirects++) {
             HttpRequest.Builder builder = HttpRequest.newBuilder(current)
                     .timeout(Duration.ofSeconds(30))
-                    .header("Accept", "application/json");
+                    .header("Accept", JSON);
             if (!hasBody) {
                 builder.method(currentMethod, HttpRequest.BodyPublishers.noBody());
             } else {
-                builder.header("Content-Type", "application/json")
+                builder.header("Content-Type", JSON)
                         .method(currentMethod, HttpRequest.BodyPublishers.ofString(currentBody));
             }
             HttpResponse<byte[]> response;
             try {
-                response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+                response = httpClient.send(builder.build(), boundedBodyHandler());
             } catch (IOException exception) {
                 throw new IllegalStateException("Directory request failed", exception);
             } catch (InterruptedException exception) {
@@ -151,40 +170,104 @@ public final class DirectoryClient {
                 hasBody = false;
             }
         }
-        throw new IllegalStateException("Directory request produced no response");
     }
 
     private String consume(HttpResponse<byte[]> response) {
+        boolean failure = response.statusCode() < 200 || response.statusCode() > 299;
+        int limit = failure ? MAXIMUM_ERROR_BYTES : MAXIMUM_BYTES;
+        // Retain checks for injected HttpClient implementations that do not apply the body handler.
+        response.headers().firstValueAsLong("Content-Length").ifPresent(declared -> {
+            if (declared > limit) {
+                throw new IllegalStateException("Directory response exceeds its byte limit");
+            }
+        });
         byte[] body = response.body();
-        if (body.length > MAXIMUM_BYTES) {
+        if (body.length > limit) {
             throw new IllegalStateException("Directory response exceeds its byte limit");
         }
         String text = new String(body, StandardCharsets.UTF_8);
-        if (response.statusCode() < 200 || response.statusCode() > 299) {
+        if (failure) {
             throw new DirectoryRequestException(
                     response.statusCode(),
-                    text.isEmpty() ? "Directory request failed with HTTP " + response.statusCode() : text,
+                    failureMessage(response.headers(), text, response.statusCode()),
                     response.headers());
         }
-        String contentType = response.headers().firstValue("Content-Type").orElse("");
-        if (!contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
+        String essence = OdpMediaType.essence(
+                response.headers().firstValue("Content-Type").orElse(""));
+        if (!JSON.equals(essence)) {
             throw new IllegalStateException("Directory response must use application/json");
         }
         return text;
     }
 
+    static HttpResponse.BodyHandler<byte[]> boundedBodyHandler() {
+        return info -> new BoundedBodySubscriber(
+                info.statusCode() >= 200 && info.statusCode() <= 299 ? MAXIMUM_BYTES : MAXIMUM_ERROR_BYTES);
+    }
+
+    /**
+     * Describes a failed request without repeating whatever the response happened to contain. Only a
+     * structured field of a JSON error document is quoted, and only after the control characters
+     * that would let it forge a log line are removed.
+     */
+    private static String failureMessage(HttpHeaders headers, String body, int status) {
+        String summary = "Directory request failed with HTTP " + status;
+        String essence = OdpMediaType.essence(headers.firstValue("Content-Type").orElse(""));
+        if (!JSON.equals(essence) && !"application/problem+json".equals(essence)) {
+            return summary;
+        }
+        OdpJsonNode document;
+        try {
+            document = OdpJson.parseTree(body);
+        } catch (IllegalArgumentException exception) {
+            return summary;
+        }
+        if (document == null || !document.isObject()) {
+            return summary;
+        }
+        String detail = firstDetail(document);
+        if (detail.isEmpty()) {
+            return summary;
+        }
+        return summary + ": "
+                + (detail.length() > MAXIMUM_ERROR_CHARACTERS
+                        ? detail.substring(0, MAXIMUM_ERROR_CHARACTERS) + "…"
+                        : detail);
+    }
+
+    /** The first structured field of an error document that carries readable text, if any does. */
+    private static String firstDetail(OdpJsonNode document) {
+        String found = "";
+        for (String field : List.of("detail", "title", "message")) {
+            OdpJsonNode value = document.get(field);
+            if (value != null && value.isString() && found.isEmpty()) {
+                found = printableText(value.asString());
+            }
+        }
+        return found;
+    }
+
+    private static String printableText(String value) {
+        StringBuilder cleaned = new StringBuilder(value.length());
+        value.codePoints().forEach(point -> cleaned.appendCodePoint(Character.isISOControl(point) ? ' ' : point));
+        return String.join(" ", cleaned.toString().trim().split("\\s+"));
+    }
+
     private URI resolveContinuation(String next) {
-        if (next == null || next.isBlank() || next.length() > 2048) {
+        if (next == null || next.isBlank() || next.length() > MAXIMUM_CONTINUATION_CHARACTERS) {
             throw new IllegalArgumentException("next must contain from 1 through 2048 characters");
+        }
+        for (int index = 0; index < next.length(); index++) {
+            char character = next.charAt(index);
+            if (character < 0x20 || character > 0x7e) {
+                throw new IllegalArgumentException("next must contain printable ASCII only");
+            }
         }
         return requireDirectoryOrigin(selectedEnvironment.origin().resolve(next));
     }
 
     private URI requireDirectoryOrigin(URI uri) {
-        URI origin = selectedEnvironment.origin();
-        if (!uri.getScheme().equalsIgnoreCase(origin.getScheme())
-                || !uri.getAuthority().equalsIgnoreCase(origin.getAuthority())
-                || uri.getUserInfo() != null) {
+        if (!DirectoryOrigins.sameOrigin(uri, selectedEnvironment.origin())) {
             throw new IllegalArgumentException("Directory continuation must remain on the canonical origin");
         }
         return uri;
@@ -192,6 +275,109 @@ public final class DirectoryClient {
 
     private static boolean isRedirect(int status) {
         return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+    }
+
+    static List<String> decodeSuggestions(String json, int limit) {
+        OdpJsonNode value;
+        try {
+            value = OdpJson.parseTree(json);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(BAD_SUGGESTIONS, exception);
+        }
+        OdpJsonNode items = value == null || !value.isObject() ? null : value.get("items");
+        if (items == null || !items.isArray()) {
+            throw new IllegalArgumentException(BAD_SUGGESTIONS);
+        }
+        Set<String> unique = new LinkedHashSet<>();
+        for (OdpJsonNode item : items) {
+            if (!item.isString()) {
+                throw new IllegalArgumentException(BAD_SUGGESTIONS);
+            }
+            String suggestion = item.asString();
+            if (suggestion.isBlank() || suggestion.length() > MAXIMUM_SUGGESTION_CHARACTERS) {
+                throw new IllegalArgumentException(BAD_SUGGESTIONS);
+            }
+            unique.add(suggestion);
+        }
+        // A directory that answers with more than was asked for is answering a different request;
+        // the caller gets what it asked for.
+        return unique.stream().limit(limit).toList();
+    }
+
+    static DirectoryModels.SearchPage decodeSearchPage(String json) {
+        OdpJsonNode value;
+        try {
+            value = OdpJson.parseTree(json);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(BAD_PAGE, exception);
+        }
+        if (value == null || !value.isObject()) {
+            throw new IllegalArgumentException(BAD_PAGE);
+        }
+        // The continuation is what drives the next request, so it is a string or it is not there.
+        OdpJsonNode next = value.get("next");
+        if (next != null && !next.isNull() && !next.isString()) {
+            throw new IllegalArgumentException(BAD_PAGE);
+        }
+        List<DirectoryModels.Issue> issues = validateResults(value.get("items"));
+        // A directory that sends its own issues member is not describing what this client found.
+        value.remove("issues");
+        DirectoryModels.SearchPage decoded;
+        try {
+            decoded = OdpJson.treeToValue(value, DirectoryModels.SearchPage.class);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(BAD_PAGE, exception);
+        }
+        validateFacets(decoded.facets());
+        return new DirectoryModels.SearchPage(
+                decoded.items(), decoded.next(), decoded.facets(), issues, decoded.additional());
+    }
+
+    /**
+     * SVC-43: `tap` is the only trust protocol this ODP version defines, so a facet counting any
+     * other name describes a vocabulary this client cannot read, and the page is not usable.
+     */
+    static void validateFacets(DirectoryModels.Facets facets) {
+        if (facets == null) {
+            return;
+        }
+        for (DirectoryModels.Facet<ServiceDocument.TrustProtocol> facet : facets.trust()) {
+            if (facet.value() == null || !"tap".equals(facet.value().name())) {
+                throw new IllegalArgumentException("Directory trust facets are invalid");
+            }
+        }
+    }
+
+    /**
+     * Validates each result in place, dropping the ones that cannot be used. One unusable record does
+     * not discard the page it arrived on; it is reported alongside the results that did survive.
+     */
+    private static List<DirectoryModels.Issue> validateResults(OdpJsonNode items) {
+        List<DirectoryModels.Issue> issues = new ArrayList<>();
+        if (items == null || !items.isArray()) {
+            return issues;
+        }
+        List<Boolean> unusable = new ArrayList<>(items.size());
+        int index = 0;
+        for (OdpJsonNode item : items) {
+            try {
+                requireResult(item);
+                OdpJson.treeToValue(item, DirectoryModels.Service.class);
+                unusable.add(false);
+            } catch (RuntimeException exception) {
+                issues.add(new DirectoryModels.Issue(index, String.valueOf(exception.getMessage())));
+                unusable.add(true);
+            }
+            index++;
+        }
+        // removeIf visits the array from its end, so the decision for each result is read back the
+        // same way it was recorded.
+        int[] cursor = {unusable.size()};
+        items.removeIf(item -> {
+            cursor[0] -= 1;
+            return unusable.get(cursor[0]);
+        });
+        return issues;
     }
 
     private static String encode(Object value) {
@@ -202,49 +388,30 @@ public final class DirectoryClient {
         }
     }
 
-    static DirectoryModels.SearchPage decodeSearchPage(String json) {
-        try {
-            OdpJsonNode value = OdpJson.parseTree(json);
-            if (value != null && value.isObject()) {
-                OdpJsonNode items = value.get("items");
-                if (items != null && items.isArray()) {
-                    items.forEach(DirectoryClient::normalizeServiceProtocols);
-                }
-            }
-            if (value == null) {
-                throw new IllegalArgumentException("Directory response is empty");
-            }
-            DirectoryModels.SearchPage page = OdpJson.treeToValue(value, DirectoryModels.SearchPage.class);
-            validateFacets(page.facets());
-            return page;
-        } catch (IllegalArgumentException exception) {
-            throw new IllegalArgumentException("Directory response is invalid", exception);
+    private static void requireResult(OdpJsonNode service) {
+        if (!service.isObject()) {
+            throw new IllegalArgumentException("Directory result must be a JSON object");
         }
-    }
-
-    static void validateFacets(DirectoryModels.Facets facets) {
-        if (facets != null
-                && facets.trust().stream()
-                        .anyMatch(facet -> facet.value() == null
-                                || !"tap".equals(facet.value().name()))) {
-            throw new IllegalArgumentException("Directory trust facets are invalid");
+        OdpJsonNode origin = service.get("service_origin");
+        if (origin == null || !origin.isString()) {
+            throw new IllegalArgumentException("Directory result service_origin is missing");
         }
-    }
-
-    private static void normalizeServiceProtocols(OdpJsonNode value) {
-        if (!value.isObject() || value.get("protocols") == null) {
-            return;
-        }
-        OdpJsonNode service = value;
+        DirectoryOrigins.requireServiceOrigin(origin.asString());
+        // The result claims to summarize a Service, so it is held to the shape of the document it
+        // summarizes, with the members only the Service itself can supply filled in here.
         OdpJsonNode document = service.deepCopy();
+        document.remove(UNVERIFIED);
+        document.remove("mcp");
         document.remove(List.of("service_origin", "indexed_at"));
         document.put("odp_version", "1.0");
         document.putObject("http").put("endpoint_base", "/");
         ServiceDocument parsed = OdpJson.parseAgentServiceDocument(document.toString());
+        service.remove(UNVERIFIED);
+        service.set("operations", OdpJson.valueToTree(parsed.operations()));
         if (parsed.protocols() == null) {
             service.remove("protocols");
-            return;
+        } else {
+            service.set("protocols", OdpJson.valueToTree(parsed.protocols()));
         }
-        service.set("protocols", OdpJson.valueToTree(parsed.protocols()));
     }
 }

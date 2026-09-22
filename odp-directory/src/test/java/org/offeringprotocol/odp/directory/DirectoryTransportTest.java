@@ -183,7 +183,12 @@ class DirectoryTransportTest {
             });
             subscriber.onNext(List.of(ByteBuffer.wrap(reply.body().getBytes(StandardCharsets.UTF_8))));
             subscriber.onComplete();
-            T body = subscriber.getBody().toCompletableFuture().join();
+            T body;
+            try {
+                body = subscriber.getBody().toCompletableFuture().join();
+            } catch (java.util.concurrent.CompletionException exception) {
+                throw new IOException(exception.getCause());
+            }
             return new HttpResponse<>() {
                 public int statusCode() {
                     return reply.status();

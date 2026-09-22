@@ -13,11 +13,18 @@ import java.util.Set;
 
 /** Validated JSON encoding and decoding for ODP documents. */
 public final class OdpJson {
+    private static final String OPERATIONS_FIELD = "operations";
+    private static final String VERSION_FIELD = "odp_version";
+    private static final String JSON_ERROR = "json";
+    private static final String SEARCH_CAPABILITIES_FIELD = "search_capabilities";
+    private static final String SEARCH_OFFERINGS = "search-offerings";
+    private static final String FILTER_DEFINITION = "Filter Definition";
     private static final String FIELD_NAME = "name";
     private static final String FIELD_TYPE = "type";
     private static final String FIELD_URL = "url";
     private static final String OFFERING = "offering";
     private static final int REQUIRED_PROVIDER_COUNT = 1;
+    private static final int UNIQUE_ACTION_COUNT = 1;
     private static final String SCHEMA_ORIGIN = "https://offeringprotocol.org/schemas/";
     private static final String SCHEMA_PATH = "/org/offeringprotocol/odp/core/schemas/";
     private static final String SERVICE_DOCUMENT = "Service Document";
@@ -30,6 +37,13 @@ public final class OdpJson {
     public static ServiceDocument parseServiceDocument(String json) {
         ServiceDocument document = parse(json, "service-document.schema.json", SERVICE_DOCUMENT, ServiceDocument.class);
         validateLocalizations(document.language(), document.localizations(), SERVICE_DOCUMENT);
+        validateCapabilities(document.searchCapabilities());
+        if (document.searchCapabilities() != null
+                && document.operations().stream()
+                        .noneMatch(operation -> operation.name() == OdpOperation.SEARCH_OFFERINGS)) {
+            throw semanticError(
+                    SERVICE_DOCUMENT, "search_capabilities requires search-offerings", "/search_capabilities");
+        }
         if (document.additional().containsKey("web_url")) {
             throw semanticError(SERVICE_DOCUMENT, "web_url is not permitted", "/web_url");
         }
@@ -51,7 +65,7 @@ public final class OdpJson {
         } catch (IllegalArgumentException exception) {
             throw new OdpValidationException(
                     "Agent response",
-                    List.of(new ValidationIssue("json", exception.getMessage(), Map.of(), "")),
+                    List.of(new ValidationIssue(JSON_ERROR, exception.getMessage(), Map.of(), "")),
                     exception);
         }
     }
@@ -66,7 +80,7 @@ public final class OdpJson {
                 }
                 filterNamedList(
                         document,
-                        "operations",
+                        OPERATIONS_FIELD,
                         Set.of(
                                 "get-collection",
                                 "get-offering",
@@ -74,10 +88,10 @@ public final class OdpJson {
                                 "list-collections",
                                 "list-offerings",
                                 "search-collections",
-                                "search-offerings"));
-                filterUnknownAuthentication(document, "operations");
+                                SEARCH_OFFERINGS));
+                filterUnknownAuthentication(document, OPERATIONS_FIELD);
                 filterTypedList(document, "mcp", Set.of("streamable-http"));
-                filterClosedObjectList(document, "operations", Set.of("authentication", FIELD_NAME));
+                filterClosedObjectList(document, OPERATIONS_FIELD, Set.of("authentication", FIELD_NAME));
                 filterClosedObjectList(document, "mcp", Set.of("description", FIELD_NAME, FIELD_TYPE, FIELD_URL));
                 filterPaymentOptions(document);
                 normalizeBranding(document);
@@ -239,14 +253,36 @@ public final class OdpJson {
     }
 
     private static void normalizeSearchCapabilities(OdpJsonNode document) {
-        OdpJsonNode value = document.get("search_capabilities");
-        if (value == null || !value.isObject()) {
+        OdpJsonNode value = document.get(SEARCH_CAPABILITIES_FIELD);
+        if (value == null) return;
+        if (!value.isObject()) {
+            document.remove(SEARCH_CAPABILITIES_FIELD);
             return;
+        }
+        OdpJsonNode operations = document.get(OPERATIONS_FIELD);
+        if (operations != null && operations.isArray()) {
+            boolean search = false;
+            for (OdpJsonNode operation : operations) {
+                if (SEARCH_OFFERINGS.equals(operation.path("name").asString())) search = true;
+            }
+            if (!search) {
+                document.remove(SEARCH_CAPABILITIES_FIELD);
+                return;
+            }
         }
         filterInlineDefinitions(value, "filters", true);
         filterInlineDefinitions(value, "sorts", false);
+        for (String member : List.of("filters", "sorts")) {
+            if (value.has(member)) {
+                try {
+                    parseSearchCapabilities("{\"" + member + "\":" + value.get(member) + "}");
+                } catch (OdpValidationException exception) {
+                    value.remove(member);
+                }
+            }
+        }
         if (value.isEmpty()) {
-            document.remove("search_capabilities");
+            document.remove(SEARCH_CAPABILITIES_FIELD);
         }
     }
 
@@ -257,6 +293,20 @@ public final class OdpJson {
             return;
         }
         inline.removeIf(item -> item.isObject() && !(filters ? knownFilter(item) : knownSort(item)));
+        if (filters) {
+            try {
+                for (OdpJsonNode item : inline) {
+                    validateFilter(parse(
+                            item.toString(),
+                            "filter-definition.schema.json",
+                            FILTER_DEFINITION,
+                            SearchCapabilities.FilterDefinition.class));
+                }
+            } catch (OdpValidationException exception) {
+                capabilities.remove(member);
+                return;
+            }
+        }
         if (inline.isEmpty()) {
             capabilities.remove(member);
         }
@@ -281,44 +331,23 @@ public final class OdpJson {
         if (actions == null || !actions.isArray()) {
             return;
         }
+        Map<String, Integer> counts = new HashMap<>();
+        actions.forEach(action -> {
+            if (action.path("id").isString()) {
+                counts.merge(action.path("id").asString(), 1, Integer::sum);
+            }
+        });
         actions.removeIf(action -> {
-            if (action.isObject() && hasUnknownAuthentication(action)) {
+            if (action.path("id").isString()
+                    && counts.getOrDefault(action.path("id").asString(), 0) > UNIQUE_ACTION_COUNT) {
                 return true;
             }
-            if (action.isObject()
-                    && action.fieldNames().stream()
-                            .anyMatch(name -> !Set.of("authentication", "description", "http", "id", "openapi", "rel")
-                                    .contains(name))) {
+            try {
+                validate(action.toString(), "action.schema.json", "Action");
+                return false;
+            } catch (OdpValidationException exception) {
                 return true;
             }
-            OdpJsonNode http = action.get("http");
-            if (http != null
-                    && http.isObject()
-                    && http.fieldNames().stream()
-                            .anyMatch(name -> !Set.of("href", "method", "request", "response_content_types")
-                                    .contains(name))) {
-                return true;
-            }
-            OdpJsonNode request = action.at("/http/request");
-            if (request.isObject()
-                    && request.fieldNames().stream()
-                            .anyMatch(name -> !Set.of("content_type", "schema").contains(name))) {
-                return true;
-            }
-            OdpJsonNode actionSchema = action.at("/http/request/schema");
-            if (actionSchema.isObject()
-                    && actionSchema.fieldNames().stream().anyMatch(name -> !FIELD_URL.equals(name))) {
-                return true;
-            }
-            OdpJsonNode openapi = action.get("openapi");
-            if (openapi != null
-                    && openapi.isObject()
-                    && openapi.fieldNames().stream()
-                            .anyMatch(name -> !Set.of("operation_id", FIELD_URL).contains(name))) {
-                return true;
-            }
-            OdpJsonNode method = action.at("/http/method");
-            return method.isString() && !Set.of("GET", "POST").contains(method.asString());
         });
         if (actions.isEmpty()) {
             document.remove("actions");
@@ -392,6 +421,7 @@ public final class OdpJson {
         Collection collection = parse(json, "collection.schema.json", "Collection", Collection.class);
         validateLocalizations(collection.language(), collection.localizations(), "Collection");
         validateImages(collection.images(), "Collection");
+        validateCapabilities(collection.searchCapabilities());
         return collection;
     }
 
@@ -425,31 +455,56 @@ public final class OdpJson {
                 json, "offering-search-request.schema.json", "Offering search request", SearchRequests.Offerings.class);
     }
 
+    public static SearchCapabilities.FilterDefinition parseFilterDefinition(String json) {
+        SearchCapabilities.FilterDefinition definition = parse(
+                json, "filter-definition.schema.json", FILTER_DEFINITION, SearchCapabilities.FilterDefinition.class);
+        validateFilter(definition);
+        return definition;
+    }
+
+    public static SearchCapabilities.SortDefinition parseSortDefinition(String json) {
+        SearchCapabilities.SortDefinition definition =
+                parse(json, "sort-definition.schema.json", "Sort Definition", SearchCapabilities.SortDefinition.class);
+        Set<String> keys = new java.util.HashSet<>();
+        if (definition.keys().stream().anyMatch(key -> !keys.add(key.filterId()))) {
+            throw semanticError("Sort Definition", "Filter identifiers must be distinct", "/keys");
+        }
+        return definition;
+    }
+
+    public static SearchCapabilities parseSearchCapabilities(String json) {
+        SearchCapabilities capabilities =
+                parse(json, "search-capabilities.schema.json", "Search capabilities", SearchCapabilities.class);
+        validateCapabilities(capabilities);
+        return capabilities;
+    }
+
     public static OfferingPage parseOfferingSearchResponse(String json) {
         OfferingPage page =
                 parse(json, "offering-search-response.schema.json", "Offering search response", OfferingPage.class);
-        page.items()
-                .forEach(item ->
-                        parseOffering(withInheritedVersion(write(item), page.odpVersion(), item.odpVersion() != null)));
+        validatePageItems(json, Offering.class);
         return page;
     }
 
     public static <T> Page<T> parsePage(String json, Class<T> itemType) {
         validate(json, "page-envelope.schema.json", "page envelope");
-        Page<T> page = decodePage(json, itemType, "page envelope");
-        if (itemType == Collection.class) {
-            page.items().forEach(item -> {
-                Collection collection = (Collection) item;
-                parseCollection(
-                        withInheritedVersion(write(collection), page.odpVersion(), collection.odpVersion() != null));
-            });
-        } else if (itemType == Offering.class) {
-            page.items().forEach(item -> {
-                Offering offering = (Offering) item;
-                parseOffering(withInheritedVersion(write(offering), page.odpVersion(), offering.odpVersion() != null));
+        validatePageItems(json, itemType);
+        return decodePage(json, itemType, "page envelope");
+    }
+
+    private static void validatePageItems(String json, Class<?> itemType) {
+        if (itemType == Collection.class || itemType == Offering.class) {
+            OdpJsonNode document = parseTree(json);
+            String version = document.path(VERSION_FIELD).asString();
+            document.path("items").forEach(item -> {
+                String inherited = withInheritedVersion(item.toString(), version, item.has(VERSION_FIELD));
+                if (itemType == Collection.class) {
+                    parseCollection(inherited);
+                } else {
+                    parseOffering(inherited);
+                }
             });
         }
-        return page;
     }
 
     public static String write(Object value) {
@@ -530,7 +585,7 @@ public final class OdpJson {
         } catch (IllegalArgumentException exception) {
             throw new OdpValidationException(
                     documentType,
-                    List.of(new ValidationIssue("json", exception.getMessage(), Map.of(), "")),
+                    List.of(new ValidationIssue(JSON_ERROR, exception.getMessage(), Map.of(), "")),
                     exception);
         }
     }
@@ -541,7 +596,7 @@ public final class OdpJson {
         } catch (IllegalArgumentException exception) {
             throw new OdpValidationException(
                     documentType,
-                    List.of(new ValidationIssue("json", exception.getMessage(), Map.of(), "")),
+                    List.of(new ValidationIssue(JSON_ERROR, exception.getMessage(), Map.of(), "")),
                     exception);
         }
     }
@@ -632,6 +687,40 @@ public final class OdpJson {
         }
     }
 
+    private static void validateCapabilities(SearchCapabilities capabilities) {
+        if (capabilities == null) return;
+        if (capabilities.filters() != null && capabilities.filters().inline() != null) {
+            Set<String> identifiers = new java.util.HashSet<>();
+            for (SearchCapabilities.FilterDefinition filter :
+                    capabilities.filters().inline()) {
+                validateFilter(filter);
+                if (!identifiers.add(filter.id()))
+                    throw semanticError("Search capabilities", "Duplicate Filter identifier", "/filters/inline");
+            }
+        }
+        if (capabilities.sorts() != null && capabilities.sorts().inline() != null) {
+            Set<String> identifiers = new java.util.HashSet<>();
+            for (SearchCapabilities.SortDefinition sort : capabilities.sorts().inline()) {
+                parseSortDefinition(write(sort));
+                if (!identifiers.add(sort.id()))
+                    throw semanticError("Search capabilities", "Duplicate Sort identifier", "/sorts/inline");
+            }
+        }
+    }
+
+    private static void validateFilter(SearchCapabilities.FilterDefinition filter) {
+        boolean numeric = Set.of("integer", "number", "decimal").contains(filter.type());
+        boolean ordered = numeric || Set.of("date", "date-time").contains(filter.type());
+        if (filter.unit() != null && !numeric) {
+            throw semanticError(FILTER_DEFINITION, "unit requires a numeric type", "/unit");
+        }
+        if (!ordered
+                && filter.operators().stream()
+                        .anyMatch(operator -> Set.of("lt", "lte", "gt", "gte").contains(operator))) {
+            throw semanticError(FILTER_DEFINITION, "comparison operator requires an ordered type", "/operators");
+        }
+    }
+
     private static OdpValidationException semanticError(String documentType, String message, String path) {
         return semanticError(documentType, message, path, null);
     }
@@ -643,7 +732,26 @@ public final class OdpJson {
     }
 
     private static void validate(String json, String schemaName, String documentType) {
-        List<ValidationIssue> issues = SCHEMAS.get(schemaName).validate(json);
+        String validationJson = json;
+        OdpJsonNode document;
+        try {
+            document = parseTree(json);
+        } catch (IllegalArgumentException exception) {
+            throw new OdpValidationException(
+                    documentType,
+                    List.of(new ValidationIssue(JSON_ERROR, exception.getMessage(), Map.of(), "")),
+                    exception);
+        }
+        OdpJsonNode version = document == null ? null : document.get(VERSION_FIELD);
+        if (version != null && version.isString() && !Odp.VERSION.equals(version.asString())) {
+            String major = Odp.VERSION.substring(0, Odp.VERSION.indexOf('.'));
+            if (version.asString().matches(major + "\\.(0|[1-9][0-9]*)")) {
+                // Validate compatible minor versions against this implementation's schema.
+                document.put(VERSION_FIELD, Odp.VERSION);
+                validationJson = document.toString();
+            }
+        }
+        List<ValidationIssue> issues = SCHEMAS.get(schemaName).validate(validationJson);
         if (!issues.isEmpty()) {
             throw new OdpValidationException(documentType, issues);
         }

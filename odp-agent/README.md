@@ -80,7 +80,17 @@ same-origin redirects and bounds Service Document and catalog response bodies.
 
 The Service Document is fetched once during `OdpServiceClient.create(...)` and retained for that
 client's lifetime. Recreate the client when the application needs a refreshed Service Document.
-The SDK does not maintain a persistent cache.
+The client has no built-in HTTP response cache, in memory or on disk. Catalog and supporting-document
+requests use the transport on each call. Applications that add caching must honor HTTP cache
+directives and validators and keep responses isolated by authentication context. The retained
+Service inspection is a snapshot, not a freshness-managed HTTP cache.
+
+Read-only ODP requests retry HTTP 429 and 503 at most three times within a 30-second retry
+window. `Retry-After` is honored when its delay fits within that window. A 503 without that header
+uses exponential backoff with jitter. Missing delay information on 429, malformed delays,
+non-transient responses, and transport failures return without automatic retry. Interruption stops
+waiting. This policy also applies to supporting-document retrieval; it never executes or retries
+an Offering Action.
 
 ## Navigate Collections and Offerings
 
@@ -96,7 +106,8 @@ Page<Offering> offerings = service.listOfferings("terse", 25, "en");
 Offering details = service.getOffering("rubber-plant", "full", "en");
 ```
 
-Representation is `terse` or `full`; passing `null` selects `terse`. Language is sent through
+Representation is `terse` or `full`. Passing `null` selects `full` for individual Offering and
+Collection retrieval, and `terse` for list and search methods. Language is sent through
 `Accept-Language` when it is nonblank. Limits must be from 1 through 100.
 
 Search requests preserve the protocol's structured filters, Collection scope, sort identifier,
@@ -148,8 +159,11 @@ Attribute Schema processing is limited to 256 KiB per document, 16 documents, ei
 levels, and one MiB for the complete graph. Each Attribute Schema request has a 30-second timeout
 and accepts at most 16 JSON nesting levels. These are fixed SDK safety ceilings.
 
-Actions are normalized to absolute compact HTTP or OpenAPI targets. Resolve the supporting document
-for one explicitly selected Action without invoking it:
+Actions are normalized to absolute compact HTTP or OpenAPI targets.
+Invalid descriptors and duplicate Action identifiers are omitted and reported through
+`OfferingDetails.issues()`. Unrelated Actions and Offering fields remain available.
+
+Resolve the supporting document for one explicitly selected Action without invoking it:
 
 ```java
 ResolvedAction action = service.resolveAction("rubber-plant", "purchase", "en");
@@ -165,39 +179,98 @@ Compact HTTP request schemas follow the same bounded resolution rules as Attribu
 targets require a JSON OpenAPI 3.1 document containing exactly one matching `operationId`; each
 OpenAPI document is limited to one MiB and 32 JSON nesting levels.
 
+## Search with advertised capabilities
+
+Use `resolveSearchCapabilities(collectionId, language)` to obtain indexed Filter Definitions,
+Sort Definitions with their resolved Filters, and scoped issues. Pass `null` for the Collection
+to use only Service-wide definitions. The resolver does not visit ancestors or descendants.
+Linked sources use the Service transport, including its authentication handling, and are accepted
+only after all pages have been validated. Invalid sources do not discard valid sources.
+
+```java
+SearchCapabilityResult capabilities = service.resolveSearchCapabilities(null, "en");
+capabilities.catalog().filters().forEach((id, definition) -> showFilter(definition));
+
+SearchRequests.Offerings request = new SearchRequests.Offerings(
+    "1.0", "office plants", null, null, null, null, null, 20);
+OfferingSearchDetails result = service.searchOfferingsDetails(request, "terse", "en");
+```
+
+`searchOfferingsDetails` resolves capabilities, validates the request against them, and returns
+Offerings together with normalized refinements and issues. Invalid refinement groups are omitted
+without discarding the Offerings or valid groups. Each normalized group includes its Filter
+Definition, so the caller can interpret the values and units without joining identifiers itself.
+Scoped HTTP failures retain the status, headers, and parsed problem in `responseFailure()`; the SDK
+does not enroll, pay, or automatically retry them. Thread interruption stops resolution.
+
+The lower-level `searchOfferings` sends the supplied request without fetching capability sources.
+It validates the response structure and requested refinement identifiers, but does not perform
+definition-dependent validation. Callers managing their own capability catalog can use
+`SearchCatalog.validateRequest` and `validateRefinements` directly. Catalogs are request-context
+dependent: do not reuse them across different Services, selected Collections, or access contexts.
+Create a fresh Service client when changing its authentication context; its Service Document is
+the snapshot retrieved during inspection.
+
 ## Continue a response
 
 Continuation values are opaque. Pass `next` unchanged to the matching continuation method:
 
 ```java
 Page<Offering> page = service.listOfferings("terse", 25, "en");
+consume(page.items());
 while (page.next() != null) {
-    page = service.continueOfferings(page.next(), "en");
+    page = service.continueOfferings(page.next(), "terse", "en");
     consume(page.items());
 }
 ```
 
+Pass the original representation explicitly so each continuation response receives the same
+validation. The client does not interpret or rewrite the opaque URL to recover this selection.
 Use `continueCollections` for Collection pages. `OdpPagination` in Core can collect a bounded
 traversal and rejects loops after at most 16 pages. Applications following pages directly should
 apply their own total page and item limits.
+
+To consume items incrementally without an asynchronous framework:
+
+```java
+Iterator<Offering> offerings = OdpPagination.iterate(
+        () -> service.listOfferings("terse", 25, "en"),
+        next -> service.continueOfferings(next, "terse", "en"),
+        100);
+while (offerings.hasNext()) {
+    consume(offerings.next());
+}
+```
+
+The iterator blocks while fetching a page, does not prefetch, and stops after the total item limit.
+Stop calling it to stop fetching. Previously delivered items remain usable if a subsequent page
+fails; the iterator rethrows that failure without fetching again. The same helper accepts Collection
+pages. For Offering search, supply `() -> service.searchOfferings(request, "terse", "en").asPage()`
+as the first loader; subsequent pages use `continueOfferings`. Refinement groups remain on the original
+`OfferingPage`, not on individual iterated items. Applications own asynchronous wrapping and must
+not use an iterator concurrently.
 
 ## Authentication and payment transport
 
 The default client performs anonymous HTTP requests. ODP advertises authentication requirements and
 payment protocols but does not implement AEP, MPP, or x402 credentials in this module.
 
-Supply `OdpTransport` when the application needs to control the HTTP stack. This complete example
-uses a dedicated JDK client without adding credentials:
+The built-in transport uses Apache HttpClient 5 internally. It validates every resolved address,
+connects to a validated address without a second DNS lookup, and verifies the connected peer before
+sending the HTTP request. HTTPS certificate and hostname verification remain enabled. System proxies,
+automatic redirects, automatic retries, and cookie storage are disabled. Response bodies are bounded
+while reading, including decompressed bodies and error responses. Connections are pooled by hostname
+and pinned address. If connection establishment fails, another validated address can be attempted
+within the request timeout, after repeating DNS validation. An HTTP request is not replayed after a
+response or a failure while sending or reading it.
+
+Apache's runtime dependencies are HttpCore, HttpCore HTTP/2, and the SLF4J API. No Kotlin runtime or
+logging backend is required. Its types are not part of the ODP public API.
+
+Use the built-in transport explicitly when composing clients:
 
 ```java
-HttpClient httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(10))
-        .followRedirects(HttpClient.Redirect.NEVER)
-        .build();
-
-OdpTransport transport = request -> httpClient.send(
-        request,
-        HttpResponse.BodyHandlers.ofByteArray());
+OdpTransport transport = OdpServiceClient.defaultTransport();
 
 OdpServiceClient service = OdpServiceClient.create(
         URI.create("https://service.example"),
@@ -205,10 +278,15 @@ OdpServiceClient service = OdpServiceClient.create(
 ```
 
 The transport receives the complete ODP `HttpRequest` and must return an
-`HttpResponse<byte[]>`. An application that supports AEP, MPP, or x402 replaces the lambda with its
+`HttpResponse<byte[]>`. An application that supports AEP, MPP, or x402 supplies its
 protocol-aware transport and performs challenge handling before returning the final response. Keep
 credentials scoped to the intended Service and authenticated principal. `OdpAgent` accepts a
 `ServiceClientFactory` when federated discovery needs the same custom transport for each Service.
+
+Custom transports are responsible for the same destination and credential protections. Override
+`send(request, maximumBytes)` to enforce the byte budget during the download; the compatibility
+default delegates to `send(request)` and cannot prevent that implementation from buffering too much
+data. Client-side checks still reject an oversized returned body.
 
 Attribute Schema, Action request-schema, and OpenAPI requests use the default anonymous transport so
 credentials added by the catalog transport are not forwarded to supporting-resource origins. Supply
@@ -235,6 +313,11 @@ Non-success Service responses throw `OdpRequestException`, which preserves the H
 headers, and parsed ODP Problem Details when supplied. Invalid protocol documents throw
 `OdpValidationException`. Invalid local arguments use `IllegalArgumentException`; unsupported
 operations and transport-boundary failures use `IllegalStateException`.
+
+Response byte and nesting-depth limits throw `OdpResponseLimitException` with
+`code()` equal to `RESPONSE_LIMIT_EXCEEDED` and `retryable()` equal to `false`.
+This is a local rejection, not an HTTP error. Attribute Schema limit failures remain
+scoped issues: affected attributes are omitted, while other Offering fields remain usable.
 
 ## Related documentation
 

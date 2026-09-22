@@ -7,4 +7,9 @@ import java.net.http.HttpResponse;
 @FunctionalInterface
 public interface OdpTransport {
     HttpResponse<byte[]> send(HttpRequest request) throws IOException, InterruptedException;
+
+    /** Custom transports must enforce this limit while reading, before buffering the entire body. */
+    default HttpResponse<byte[]> send(HttpRequest request, int maximumBytes) throws IOException, InterruptedException {
+        return send(request);
+    }
 }

@@ -189,14 +189,16 @@ and state-changing requests.
 
 ## Runtime boundaries
 
-Applications own persistent caching, authentication context, authorization, catalog persistence,
+Applications own HTTP response caching, authentication context, authorization, catalog persistence,
 indexing, rate limiting, and Action execution. The clients enforce ODP document validation,
 same-origin redirect and continuation rules, response-size limits, and fixed production or sandbox
 directory selection.
 
 `OdpServiceClient` fetches and validates its Service Document when the client is created and retains
-that inspection for the client's lifetime. The Java SDK does not maintain a persistent cache or
-refresh a live client automatically; applications choose when to reuse or recreate clients.
+that inspection for the client's lifetime. The clients have no built-in HTTP response cache, in memory
+or on disk, and do not refresh a live client automatically. Applications choose when to reuse or
+recreate clients. Application-provided caches must honor HTTP cache directives and validators and
+keep responses isolated by authentication context.
 
 ## Runnable examples
 

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
@@ -74,6 +75,24 @@ class OfferingDetailsTest {
         assertTrue(fixture.supportingRequests().stream()
                 .allMatch(
                         request -> request.headers().firstValue("Authorization").isEmpty()));
+    }
+
+    @Test
+    void propagatesInterruptedAttributeSchemaFetch() {
+        OdpTransport service = request -> response(
+                request,
+                request.uri().getPath().equals("/.well-known/odp") ? SERVICE_DOCUMENT : OFFERING,
+                "application/odp+json");
+        OdpTransport supporting = request -> {
+            throw new InterruptedException("cancelled");
+        };
+        OdpServiceClient client = OdpServiceClient.create(URI.create("https://plants.example"), service, supporting);
+        try {
+            assertThrows(IllegalStateException.class, () -> client.getOfferingDetails("gpu", null));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     @Test

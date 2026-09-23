@@ -18,6 +18,7 @@ class DirectoryResultsTest {
     static final String SERVICE = """
             {"service_id":"ca0304cc-ab28-43e5-af94-7bdf11b40c6e",
              "service_origin":"https://api.example.com","name":"Example Service",
+             "source":{"type":"odp","url":"https://api.example.com/.well-known/odp","x402_discovery":false},
              "description":"Data services.","language":"en","localizations":["en"],
              "operations":[{"name":"get-offering","authentication":"not-required"},
                {"name":"list-offerings","authentication":"not-required"}],

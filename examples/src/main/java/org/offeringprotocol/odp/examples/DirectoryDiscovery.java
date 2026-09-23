@@ -31,11 +31,16 @@ public final class DirectoryDiscovery {
                 print(
                         "Service",
                         service.service().name() + " — " + service.service().serviceOrigin());
+                print("Discovery document", service.service().source().url());
             } else if (result instanceof DirectoryModels.CollectionResult collection) {
                 print(
                         "Collection",
                         collection.collection().name() + " — "
                                 + collection.service().serviceOrigin());
+                if (!"odp".equals(collection.service().source().type())) {
+                    print("Discovery document", collection.service().source().url());
+                    continue;
+                }
                 OdpServiceClient client =
                         OdpServiceClient.create(URI.create(collection.service().serviceOrigin()));
                 boolean anonymous = client.inspection().document().operations().stream()

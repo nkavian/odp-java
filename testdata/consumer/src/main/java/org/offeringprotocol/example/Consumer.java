@@ -17,10 +17,19 @@ public final class Consumer {
         DirectoryClient directory = DirectoryClient.create();
         OdpAgent agent = new OdpAgent(directory);
         DirectoryModels.SearchRequest request = new DirectoryModels.SearchRequest("plants", null, 10);
+        DirectoryModels.ServiceFilters filters = new DirectoryModels.ServiceFilters(
+                null, null, null, null, null, List.of("openapi"));
         DirectoryModels.ResourceSearchRequest mixed = new DirectoryModels.ResourceSearchRequest(
-                "weather", null, 10, List.of("service", "collection"));
-        if (!OdpJson.write(mixed).contains("\"types\":[\"service\",\"collection\"]")) {
+                "weather", filters, 10, List.of("service", "collection"));
+        if (!OdpJson.write(mixed).contains("\"types\":[\"service\",\"collection\"]")
+                || !OdpJson.write(mixed).contains("\"sources\":[\"openapi\"]")) {
             throw new IllegalStateException("Mixed Directory request encoding failed");
+        }
+        DirectoryModels.Source source = OdpJson.treeToValue(OdpJson.parseTree("""
+                {"type":"openapi","url":"https://example.com/v1/openapi.json","x402_discovery":false}
+                """), DirectoryModels.Source.class);
+        if (!"openapi".equals(source.type()) || source.x402Discovery()) {
+            throw new IllegalStateException("Directory source decoding failed");
         }
         Offering offering = OdpJson.parseOffering("""
                 {

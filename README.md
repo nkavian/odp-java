@@ -105,8 +105,11 @@ every ODP module to one project unless they actually implement multiple roles.
 ## Agent quick start
 
 For mixed Service/Collection discovery, use `DirectoryClient.search` and `continueSearch`.
+Results identify their exact discovery document through `service().source()`. Mixed search and
+suggestions support `filters.sources` for ODP and OpenAPI; only ODP sources can be passed to
+ODP Agent operations. Imported Collections are Directory groups, not ODP Collection targets.
 `suggest` returns matching target names. The existing `searchServices`, `continueSearchServices`
-and `suggestServices` remain available for Service-only discovery. See the
+and `suggestServices` remain available for native ODP Service-only discovery. See the
 [Directory guide](./odp-directory/README.md) for result types, facets, attribution and the
 100-result mixed-search cap. Each Java search call returns one response; it does not traverse
 continuations automatically.

@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.offeringprotocol.odp.core.AuthenticationRequirement;
+import org.offeringprotocol.odp.core.OdpJson;
 import org.offeringprotocol.odp.core.OdpJsonNode;
 import org.offeringprotocol.odp.core.OdpOperation;
 import org.offeringprotocol.odp.core.OperationDescriptor;
@@ -117,7 +118,17 @@ public interface DirectoryModels {
             List<String> keywords,
             List<OperationFilter> operations,
             List<PaymentFilter> payments,
-            List<ServiceDocument.TrustProtocol> trust) {
+            List<ServiceDocument.TrustProtocol> trust,
+            List<String> sources) {
+        public ServiceFilters(
+                List<ServiceDocument.EnrollmentProtocol> enrollment,
+                List<String> keywords,
+                List<OperationFilter> operations,
+                List<PaymentFilter> payments,
+                List<ServiceDocument.TrustProtocol> trust) {
+            this(enrollment, keywords, operations, payments, trust, null);
+        }
+
         public ServiceFilters(
                 List<ServiceDocument.EnrollmentProtocol> enrollment,
                 List<String> keywords,
@@ -127,6 +138,15 @@ public interface DirectoryModels {
         }
 
         public ServiceFilters {
+            if (sources != null
+                    && (sources.isEmpty()
+                            || sources.size() > 2
+                            || sources.stream().distinct().count() != sources.size()
+                            || sources.stream()
+                                    .anyMatch(source -> !"odp".equals(source) && !"openapi".equals(source)))) {
+                throw new IllegalArgumentException("sources must contain distinct odp or openapi values");
+            }
+            sources = sources == null ? List.of() : List.copyOf(sources);
             if (trust != null
                     && (trust.size() != 1
                             || trust.get(0) == null
@@ -174,6 +194,22 @@ public interface DirectoryModels {
         public String serviceId() {
             OdpJsonNode value = additional.get("service_id");
             return value == null ? null : value.asString();
+        }
+
+        /** The discovery document for mixed search results; absent from native Service-only results. */
+        public Source source() {
+            OdpJsonNode value = additional.get("source");
+            return value == null ? null : OdpJson.treeToValue(value, Source.class);
+        }
+    }
+
+    public record Source(
+            String type,
+            String url,
+            @JsonProperty("x402_discovery") boolean x402Discovery,
+            @JsonAnySetter @JsonAnyGetter Map<String, OdpJsonNode> additional) {
+        public Source {
+            additional = additional == null ? Map.of() : Map.copyOf(additional);
         }
     }
 

@@ -3,8 +3,10 @@
 The official Java client for discovering indexed Services and submitted Collections through the
 canonical Directory. It does not crawl catalogs or index Offerings.
 
-After directory discovery, an Agent inspects each candidate's live ODP document and queries the
-Service's Collections and Offerings with [`odp-agent`](../odp-agent/README.md).
+Mixed search includes native ODP Services and imported OpenAPI Services. For a result whose
+`service().source().type()` is `"odp"`, an Agent can inspect its live ODP document and query its
+Collections and Offerings with [`odp-agent`](../odp-agent/README.md). The Directory module does
+not fetch or execute OpenAPI documents.
 
 ## Install
 
@@ -36,10 +38,13 @@ for (DirectoryModels.Result result : response.items()) {
 The fourth request argument is an optional list of `"service"` and/or `"collection"`; null selects
 both. Explicit lists must be nonempty and distinct. Filters use the owning Service's metadata.
 
-A Collection's identity is its owning Service origin plus its case-sensitive `collection().id()`.
-Inspect that Service's live document and use `OdpServiceClient.getCollection` to retrieve current
-details. `indexedAt()` on the result records Collection freshness, while `service().indexedAt()`
-records the parent's freshness. `service().serviceId()` identifies the local Directory Service.
+A Collection's identity is its owning `service().serviceId()` plus its case-sensitive
+`collection().id()`. Multiple document URLs can share the same API origin. For an ODP source,
+inspect that Service's live document and use `OdpServiceClient.getCollection` to retrieve current
+details. An imported OpenAPI Collection is a Directory presentation group, not an ODP
+`getCollection` target. `indexedAt()` on the result records Collection freshness, while
+`service().indexedAt()` records the parent's freshness. `service().serviceId()` identifies the
+local Directory Service.
 For Service results, optional `availableThrough()` identifies a platform. Collection attribution
 is its owning `service()`.
 
@@ -60,10 +65,41 @@ the Directory landing page.
 
 See the [runnable canonical discovery example](../examples/README.md#canonical-directory-discovery).
 
+## Source documents and filters
+
+Every known mixed result carries a `service().source()` with:
+
+- `type()`: `"odp"`, `"openapi"`, or an unknown future format. Unknown formats remain readable;
+  they do not authorize ODP calls.
+- `url()`: the exact primary document URL, including its path and query. It can be on a different
+  origin from `serviceOrigin()`. Use this value for document discovery rather than reconstructing
+  a URL from the API origin.
+- `x402Discovery()`: whether supporting fixed-path x402 discovery was detected. This is not
+  proof that an endpoint accepts payment. Advertised protocol evidence remains in `protocols()`.
+
+Imported results require a name, Service identifier, API origin, source and indexing timestamp.
+Description and language can be absent; unavailable list fields are exposed as empty lists.
+Imported results do not expose native ODP operations. Source fields not recognized by this SDK
+are retained in `source().additional()`.
+
+```java
+DirectoryModels.ServiceFilters filters = new DirectoryModels.ServiceFilters(
+        null, null, null, null, null, List.of("openapi"));
+DirectoryModels.SearchResponse response = directory.search(
+        new DirectoryModels.ResourceSearchRequest("weather", filters, 25, null));
+List<String> names = directory.suggest("we", 10, filters);
+```
+
+The final filter argument, `sources`, accepts one or both distinct lowercase values `"odp"` and
+`"openapi"`. Null omits the filter; an explicit empty list is invalid. Values are alternatives,
+combined with the other filter categories using AND. Collections inherit their Service's source.
+`searchServices` also accepts this filter but remains ODP-only, so an OpenAPI-only filter produces
+no native Service matches. Its results do not include `source()` metadata.
+
 ## Search only Services
 
-`DirectoryClient.create()` uses the fixed production directory. Search accepts natural-language
-text, deterministic filters, or both.
+`searchServices` returns native ODP Services only. `DirectoryClient.create()` uses the fixed
+production directory. Search accepts natural-language text, deterministic filters, or both.
 
 ```java
 import java.util.List;
@@ -101,7 +137,7 @@ downloading a global vocabulary.
 Compatible results may advertise protocol names unknown to this library. The client filters those
 descriptors and preserves recognized enrollment, payment, and trust descriptors, including TAP.
 
-## What the client checks in a result
+## What the client checks in a native Service-only result
 
 A directory result is a third party's description of somebody else's Service, and an Agent connects
 to whatever `service_origin` names, so each result is checked before it is handed over:

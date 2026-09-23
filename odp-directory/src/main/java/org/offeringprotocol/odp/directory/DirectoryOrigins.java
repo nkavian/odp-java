@@ -68,7 +68,7 @@ final class DirectoryOrigins {
         requirePublicHost(origin.getHost());
     }
 
-    private static void requirePublicHost(String host) {
+    static void requirePublicHost(String host) {
         String name = host.toLowerCase(Locale.ROOT);
         if ("localhost".equals(name) || name.endsWith(".localhost")) {
             throw new IllegalArgumentException("Directory result service_origin must name a public host");

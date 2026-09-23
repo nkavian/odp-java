@@ -106,6 +106,30 @@ class DirectoryTransportTest {
     }
 
     @Test
+    void sendsSourceFiltersOnMixedNativeAndSuggestionRequests() {
+        StubClient transport = new StubClient();
+        DirectoryClient directory = DirectoryClient.create(DirectoryEnvironment.PRODUCTION, transport);
+        var filters =
+                new DirectoryModels.ServiceFilters(null, List.of("weather"), null, null, null, List.of("openapi"));
+        transport.add(200, "{\"items\":[]}", Map.of());
+        directory.search(new DirectoryModels.ResourceSearchRequest("forecast", filters, 10, List.of("collection")));
+        transport.add(200, "{\"items\":[]}", Map.of());
+        directory.searchServices(new DirectoryModels.SearchRequest("forecast", filters, 10));
+        transport.add(200, "{\"items\":[\"Weather\"]}", Map.of());
+        assertEquals(List.of("Weather"), directory.suggest("we", 10, filters));
+        for (String body : transport.bodies) {
+            var encoded = org.offeringprotocol.odp.core.OdpJson.parseTree(body);
+            assertEquals("[\"openapi\"]", encoded.at("/filters/sources").toString());
+            assertEquals("[\"weather\"]", encoded.at("/filters/keywords").toString());
+        }
+        assertEquals(
+                List.of("/v1/directory/search", "/v1/services/search", "/v1/directory/suggestions"),
+                transport.requests.stream()
+                        .map(request -> request.uri().getPath())
+                        .toList());
+    }
+
+    @Test
     void sendsSuggestionFiltersInJson() {
         StubClient transport = new StubClient();
         DirectoryClient directory = DirectoryClient.create(DirectoryEnvironment.PRODUCTION, transport);

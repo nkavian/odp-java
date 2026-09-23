@@ -14,6 +14,7 @@ import org.offeringprotocol.odp.core.OdpUris;
 import org.offeringprotocol.odp.core.ServiceDocument;
 
 final class DirectoryResults {
+    private static final String SOURCE_ODP = "odp";
     private static final String FIELD_FACETS = "facets";
     private static final String FIELD_NEXT = "next";
     private static final String FIELD_SERVICE = "service";
@@ -64,17 +65,12 @@ final class DirectoryResults {
         text(serviceNode, FIELD_SERVICE_ID, 128);
         origin(serviceNode, FIELD_SERVICE_ORIGIN);
         instant(serviceNode, FIELD_INDEXED_AT);
+        DirectoryModels.Source source = DirectorySources.read(serviceNode.get("source"));
         serviceNode.remove(List.of("branding", "http", "mcp", "odp_version", "payment_origins", "search_capabilities"));
-        OdpJsonNode document = serviceNode.deepCopy();
-        document.remove(List.of(FIELD_SERVICE_ID, FIELD_SERVICE_ORIGIN, FIELD_INDEXED_AT));
-        document.put("odp_version", "1.0");
-        document.putObject("http").put("endpoint_base", "/");
-        ServiceDocument parsed = OdpJson.parseAgentServiceDocument(document.toString());
-        serviceNode.set("operations", OdpJson.valueToTree(parsed.operations()));
-        if (parsed.protocols() == null) {
-            serviceNode.remove("protocols");
+        if (SOURCE_ODP.equals(source.type())) {
+            nativeService(serviceNode);
         } else {
-            serviceNode.set("protocols", OdpJson.valueToTree(parsed.protocols()));
+            DirectorySources.importedService(serviceNode);
         }
         DirectoryModels.Service service = OdpJson.treeToValue(serviceNode, DirectoryModels.Service.class);
         Instant indexedAt = instant(value, FIELD_INDEXED_AT);
@@ -87,6 +83,25 @@ final class DirectoryResults {
                     reference,
                     additional(value, Set.of("type", FIELD_SERVICE, FIELD_INDEXED_AT, FIELD_AVAILABLE_THROUGH)));
         }
+        return collection(value, service, indexedAt);
+    }
+
+    private static void nativeService(OdpJsonNode serviceNode) {
+        OdpJsonNode document = serviceNode.deepCopy();
+        document.remove(List.of(FIELD_SERVICE_ID, FIELD_SERVICE_ORIGIN, FIELD_INDEXED_AT, "source"));
+        document.put("odp_version", "1.0");
+        document.putObject("http").put("endpoint_base", "/");
+        ServiceDocument parsed = OdpJson.parseAgentServiceDocument(document.toString());
+        serviceNode.set("operations", OdpJson.valueToTree(parsed.operations()));
+        if (parsed.protocols() == null) {
+            serviceNode.remove("protocols");
+        } else {
+            serviceNode.set("protocols", OdpJson.valueToTree(parsed.protocols()));
+        }
+    }
+
+    private static DirectoryModels.CollectionResult collection(
+            OdpJsonNode value, DirectoryModels.Service service, Instant indexedAt) {
         OdpJsonNode collection = object(value.get(FIELD_COLLECTION), FIELD_COLLECTION);
         String id = text(collection, "id", 128);
         if (!OdpUris.isLocalResourceIdentifier(id)) {
@@ -137,14 +152,14 @@ final class DirectoryResults {
         }
     }
 
-    private static OdpJsonNode object(OdpJsonNode value, String name) {
+    static OdpJsonNode object(OdpJsonNode value, String name) {
         if (value == null || !value.isObject()) {
             throw new IllegalArgumentException(name + " must be an object");
         }
         return value;
     }
 
-    private static String text(OdpJsonNode value, String name, int maximum) {
+    static String text(OdpJsonNode value, String name, int maximum) {
         OdpJsonNode node = value.get(name);
         if (node == null
                 || !node.isString()

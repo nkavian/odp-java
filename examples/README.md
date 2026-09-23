@@ -86,8 +86,9 @@ Full Offering agent-guide:
 [`DirectoryDiscovery.java`](./src/main/java/org/offeringprotocol/odp/examples/DirectoryDiscovery.java)
 uses the real Directory API rather than `MockDirectory`. It requests up to five mixed results,
 prints Service and Collection names, reports unusable items, and retrieves full Collection details
-only after the owning Service advertises anonymous retrieval. It does not enroll, pay or execute
-Actions. Unknown result types are reported without being treated as Services.
+only for ODP sources whose Service advertises anonymous retrieval. For imported Collections it
+prints the exact discovery document URL without calling ODP endpoints. It does not enroll, pay
+or execute Actions. Unknown result types are reported without being treated as Services.
 
 ```sh
 ./mvnw -q -DskipTests install

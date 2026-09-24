@@ -2,7 +2,7 @@ plugins {
     java
 }
 
-val odpVersion = providers.gradleProperty("odpVersion").getOrElse("0.2.1")
+val odpVersion = providers.gradleProperty("odpVersion").getOrElse("0.3.0")
 
 repositories {
     providers.gradleProperty("odpRepository").orNull?.let {

@@ -48,7 +48,7 @@ Import `odp-bom` once to keep every explicitly selected ODP module on a compatib
     <dependency>
       <groupId>org.offeringprotocol</groupId>
       <artifactId>odp-bom</artifactId>
-      <version>0.2.1</version>
+      <version>0.3.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -85,7 +85,7 @@ For a Service integration:
 Gradle uses the same coordinates:
 
 ```kotlin
-implementation(platform("org.offeringprotocol:odp-bom:0.2.1"))
+implementation(platform("org.offeringprotocol:odp-bom:0.3.0"))
 implementation("org.offeringprotocol:odp-agent")
 implementation("org.offeringprotocol:odp-json-jackson2")
 ```
@@ -94,8 +94,8 @@ The BOM manages ODP module versions only. It does not add modules, select a Jack
 manage Jackson itself. Applications select the role modules they use and exactly one JSON provider.
 
 Consumers that prefer direct versions can omit the BOM and specify the same ODP release on each
-dependency, for example `org.offeringprotocol:odp-agent:0.2.1` and
-`org.offeringprotocol:odp-json-jackson2:0.2.1`.
+dependency, for example `org.offeringprotocol:odp-agent:0.3.0` and
+`org.offeringprotocol:odp-json-jackson2:0.3.0`.
 
 Replace `odp-json-jackson2` with `odp-json-jackson3` when the application uses Jackson 3. Exactly
 one provider must be present at runtime; `OdpJson` discovers it through Java `ServiceLoader`.

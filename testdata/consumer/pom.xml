@@ -9,7 +9,7 @@
   <version>1.0.0</version>
 
   <properties>
-    <odp.version>0.2.1</odp.version>
+    <odp.version>0.3.0</odp.version>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>

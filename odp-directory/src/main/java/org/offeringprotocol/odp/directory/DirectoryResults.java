@@ -22,7 +22,7 @@ final class DirectoryResults {
     private static final String FIELD_SERVICE_ID = "service_id";
     private static final String FIELD_SERVICE_ORIGIN = "service_origin";
     private static final String FIELD_INDEXED_AT = "indexed_at";
-    private static final String FIELD_AVAILABLE_THROUGH = "available_through";
+    private static final String FIELD_PUBLISHER = "publisher";
     private static final String FIELD_NAME = "name";
 
     private DirectoryResults() {}
@@ -75,13 +75,15 @@ final class DirectoryResults {
         DirectoryModels.Service service = OdpJson.treeToValue(serviceNode, DirectoryModels.Service.class);
         Instant indexedAt = instant(value, FIELD_INDEXED_AT);
         if (FIELD_SERVICE.equals(type)) {
-            DirectoryModels.ServiceReference reference =
-                    value.has(FIELD_AVAILABLE_THROUGH) ? reference(value.get(FIELD_AVAILABLE_THROUGH)) : null;
+            DirectoryModels.Publisher publisher =
+                    value.has(FIELD_PUBLISHER) && !value.get(FIELD_PUBLISHER).isNull()
+                            ? publisher(value.get(FIELD_PUBLISHER))
+                            : null;
             return new DirectoryModels.ServiceResult(
                     service,
                     indexedAt,
-                    reference,
-                    additional(value, Set.of("type", FIELD_SERVICE, FIELD_INDEXED_AT, FIELD_AVAILABLE_THROUGH)));
+                    publisher,
+                    additional(value, Set.of("type", FIELD_SERVICE, FIELD_INDEXED_AT, FIELD_PUBLISHER)));
         }
         return collection(value, service, indexedAt);
     }
@@ -126,13 +128,18 @@ final class DirectoryResults {
                 additional(value, Set.of("type", FIELD_SERVICE, FIELD_INDEXED_AT, FIELD_COLLECTION)));
     }
 
-    private static DirectoryModels.ServiceReference reference(OdpJsonNode value) {
-        object(value, FIELD_AVAILABLE_THROUGH);
-        return new DirectoryModels.ServiceReference(
-                text(value, FIELD_SERVICE_ID, 128),
-                origin(value, FIELD_SERVICE_ORIGIN),
-                value.has(FIELD_NAME) ? text(value, FIELD_NAME, 128) : null,
-                additional(value, Set.of(FIELD_SERVICE_ID, FIELD_SERVICE_ORIGIN, FIELD_NAME)));
+    private static DirectoryModels.Publisher publisher(OdpJsonNode value) {
+        object(value, FIELD_PUBLISHER);
+        String website = text(value, "website_url", 512);
+        URI uri = URI.create(website);
+        if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getRawUserInfo() != null) {
+            throw new IllegalArgumentException("Publisher website must be an HTTPS URL without credentials");
+        }
+        return new DirectoryModels.Publisher(
+                text(value, "publisher_id", 128),
+                text(value, FIELD_NAME, 128),
+                website,
+                additional(value, Set.of("publisher_id", "website_url", FIELD_NAME)));
     }
 
     private static String origin(OdpJsonNode value, String name) {

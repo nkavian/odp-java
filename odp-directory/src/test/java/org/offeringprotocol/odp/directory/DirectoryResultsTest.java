@@ -46,8 +46,8 @@ class DirectoryResultsTest {
     @Test
     void readsKnownAndUnknownResultsWithAttributionAndFreshness() {
         OdpJsonNode service = result("service");
-        service.set("available_through", OdpJson.parseTree("""
-                {"service_id":"platform","service_origin":"https://platform.example","name":"Platform","extra":true}
+        service.set("publisher", OdpJson.parseTree("""
+                {"publisher_id":"platform","website_url":"https://platform.example/catalog","name":"Platform","extra":true}
                 """));
         service.put("extra", "retained");
         OdpJsonNode collection = result("collection");
@@ -58,10 +58,10 @@ class DirectoryResultsTest {
         var first = assertInstanceOf(
                 DirectoryModels.ServiceResult.class, decoded.items().get(0));
         assertEquals("service", first.type());
-        assertEquals("Platform", first.availableThrough().name());
+        assertEquals("Platform", first.publisher().name());
         assertEquals("ca0304cc-ab28-43e5-af94-7bdf11b40c6e", first.service().serviceId());
         assertEquals("retained", first.additional().get("extra").asString());
-        assertTrue(first.availableThrough().additional().get("extra").asBoolean(false));
+        assertTrue(first.publisher().additional().get("extra").asBoolean(false));
         assertEquals(1, first.service().protocols().trust().size());
         var second = assertInstanceOf(
                 DirectoryModels.CollectionResult.class, decoded.items().get(1));
@@ -106,13 +106,14 @@ class DirectoryResultsTest {
             assertEquals(0, decoded.issues().get(0).index());
         }
         for (String reference : List.of(
-                "null",
                 "{}",
                 "false",
-                "{\"service_id\":\"x\",\"service_origin\":\"https://user@platform.example\"}",
-                "{\"service_id\":\"x\",\"service_origin\":\"https://platform.example\",\"name\":null}")) {
+                "{\"publisher_id\":\"x\",\"website_url\":\"https://user@platform.example\",\"name\":\"Platform\"}",
+                "{\"publisher_id\":\"x\",\"website_url\":\"http://platform.example\",\"name\":\"Platform\"}",
+                "{\"publisher_id\":\"x\",\"website_url\":\"https:///\",\"name\":\"Platform\"}",
+                "{\"publisher_id\":\"x\",\"website_url\":\"https://platform.example\",\"name\":null}")) {
             OdpJsonNode invalid = result("service");
-            invalid.set("available_through", OdpJson.parseTree(reference));
+            invalid.set("publisher", OdpJson.parseTree(reference));
             assertEquals(1, DirectoryResults.decode(response(invalid)).issues().size());
         }
     }
@@ -127,21 +128,32 @@ class DirectoryResultsTest {
                  {"name":"list-offerings","authentication":"not-required"},
                  {"name":"future-operation","authentication":"not-required"}]
                 """));
-        service.set("available_through", OdpJson.parseTree("""
-                {"service_id":"x","service_origin":"https://platform.example"}
+        service.set("publisher", OdpJson.parseTree("""
+                {"publisher_id":"x","website_url":"https://platform.example","name":"Platform"}
                 """));
         var decoded = DirectoryResults.decode(response(service));
         var item = assertInstanceOf(
                 DirectoryModels.ServiceResult.class, decoded.items().get(0));
-        assertNull(item.availableThrough().name());
+        assertEquals("Platform", item.publisher().name());
+        assertEquals("x", item.publisher().publisherId());
+        assertEquals("https://platform.example", item.publisher().websiteUrl());
         assertNull(item.service().protocols());
         assertNull(item.service().additional().get("http"));
         assertEquals(2, item.service().operations().size());
-        service.remove("available_through");
+        service.set("publisher", OdpJson.parseTree("null"));
+        service.set("available_through", OdpJson.parseTree("{\"service_id\":\"legacy\"}"));
+        service.set("future_metadata", OdpJson.parseTree("{\"arbitrary\":true}"));
+        var withoutPublisher = assertInstanceOf(
+                DirectoryModels.ServiceResult.class,
+                DirectoryResults.decode(response(service)).items().get(0));
+        assertNull(withoutPublisher.publisher());
+        assertTrue(withoutPublisher.additional().containsKey("available_through"));
+        assertTrue(withoutPublisher.additional().containsKey("future_metadata"));
+        service.remove("publisher");
         assertNull(assertInstanceOf(
                         DirectoryModels.ServiceResult.class,
                         DirectoryResults.decode(response(service)).items().get(0))
-                .availableThrough());
+                .publisher());
         for (boolean omit : List.of(true, false)) {
             OdpJsonNode collection = result("collection");
             if (omit) {

@@ -44,7 +44,7 @@ public interface DirectoryModels {
     }
 
     public record ServiceResult(
-            Service service, Instant indexedAt, ServiceReference availableThrough, Map<String, OdpJsonNode> additional)
+            Service service, Instant indexedAt, Publisher publisher, Map<String, OdpJsonNode> additional)
             implements Result {
         public ServiceResult {
             additional = Collections.unmodifiableMap(new LinkedHashMap<>(additional));
@@ -80,9 +80,8 @@ public interface DirectoryModels {
         }
     }
 
-    public record ServiceReference(
-            String serviceId, String serviceOrigin, String name, Map<String, OdpJsonNode> additional) {
-        public ServiceReference {
+    public record Publisher(String publisherId, String name, String websiteUrl, Map<String, OdpJsonNode> additional) {
+        public Publisher {
             additional = Collections.unmodifiableMap(new LinkedHashMap<>(additional));
         }
     }

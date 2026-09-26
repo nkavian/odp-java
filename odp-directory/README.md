@@ -45,7 +45,9 @@ details. An imported OpenAPI Collection is a Directory presentation group, not a
 `getCollection` target. `indexedAt()` on the result records Collection freshness, while
 `service().indexedAt()` records the parent's freshness. `service().serviceId()` identifies the
 local Directory Service.
-For Service results, optional `availableThrough()` identifies a platform. Collection attribution
+For Service results, optional `publisher()` provides `publisherId()`, `name()`, and `websiteUrl()` for display attribution.
+The website is not a discovery or execution target. Omitted or null attribution is accepted;
+additional response fields are retained. Collection attribution
 is its owning `service()`.
 
 Known types are validated; a malformed item is omitted and reported in `response.issues()` with

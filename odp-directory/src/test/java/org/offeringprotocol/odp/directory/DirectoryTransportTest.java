@@ -134,9 +134,20 @@ class DirectoryTransportTest {
         StubClient transport = new StubClient();
         DirectoryClient directory = DirectoryClient.create(DirectoryEnvironment.PRODUCTION, transport);
         transport.add(200, "{\"items\":[\"Weather\"]}", Map.of());
-        var filters = new DirectoryModels.ServiceFilters(null, List.of("weather"), null, null);
+        var filters = new DirectoryModels.ServiceFilters(
+                null,
+                List.of("weather"),
+                null,
+                List.of(new DirectoryModels.PaymentFilter(
+                        null,
+                        "mpp",
+                        List.of(
+                                org.offeringprotocol.odp.core.PaymentOption.ARC,
+                                org.offeringprotocol.odp.core.PaymentOption.MONAD))));
         assertEquals(List.of("Weather"), directory.suggest("we", null, filters));
-        assertEquals("{\"prefix\":\"we\",\"filters\":{\"keywords\":[\"weather\"]}}", transport.bodies.get(0));
+        assertEquals(
+                "{\"prefix\":\"we\",\"filters\":{\"keywords\":[\"weather\"],\"payments\":[{\"name\":\"mpp\",\"options\":[\"arc\",\"monad\"]}]}}",
+                transport.bodies.get(0));
         assertEquals(
                 "application/json",
                 transport.requests.get(0).headers().firstValue("Content-Type").orElseThrow());

@@ -61,6 +61,28 @@ class ResultConformanceTest {
     }
 
     @Test
+    void readsArcAndMonadPaymentMetadata() {
+        for (PaymentOption option : List.of(PaymentOption.ARC, PaymentOption.MONAD)) {
+            String payment = """
+                    {"name":"x402","authentication":"not-required","options":["%s"]}
+                    """.formatted(option.value());
+            String record =
+                    RECORD.substring(0, RECORD.lastIndexOf('}')) + ",\"protocols\":{\"payments\":[" + payment + "]}}";
+            String facets = """
+                    ,"facets":{"payments":[{"count":1,"value":%s}],
+                    "payment_options":[{"count":1,"value":{"name":"x402","option":"%s"}}]}
+                    """.formatted(payment, option.value());
+            var result = page(record, facets);
+            assertEquals(
+                    List.of(option),
+                    result.items().get(0).protocols().payments().get(0).options());
+            assertEquals(
+                    List.of(option), result.facets().payments().get(0).value().options());
+            assertEquals(option, result.facets().paymentOptions().get(0).value().option());
+        }
+    }
+
+    @Test
     void readsAPageThatCarriesNoResults() {
         assertTrue(DirectoryClient.decodeSearchPage("{}").items().isEmpty());
         assertTrue(DirectoryClient.decodeSearchPage("{\"items\":null}").items().isEmpty());

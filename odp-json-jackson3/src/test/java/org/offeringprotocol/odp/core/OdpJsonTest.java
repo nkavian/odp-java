@@ -11,6 +11,37 @@ import org.junit.jupiter.api.Test;
 
 class OdpJsonTest {
     @Test
+    void preservesArcAndMonadPaymentOptions() {
+        String document = """
+                {"odp_version":"1.0","name":"Example","description":"Catalog","language":"en",
+                "localizations":["en"],"http":{"endpoint_base":"/odp"},
+                "operations":[{"name":"list-offerings","authentication":"not-required"},
+                {"name":"get-offering","authentication":"not-required"}],
+                "protocols":{"payments":[{"name":"x402","authentication":"not-required","options":["arc","monad"]}]}}
+                """;
+        var expected = java.util.List.of(
+                org.offeringprotocol.odp.core.PaymentOption.ARC, org.offeringprotocol.odp.core.PaymentOption.MONAD);
+        var parsed = OdpJson.parseServiceDocument(document);
+        assertEquals(expected, parsed.protocols().payments().get(0).options());
+        assertEquals(
+                expected,
+                OdpJson.parseServiceDocument(OdpJson.write(parsed))
+                        .protocols()
+                        .payments()
+                        .get(0)
+                        .options());
+        String unknown = document.replace("[\"arc\",\"monad\"]", "[\"arc\",\"monad\",\"future-option\"]");
+        assertThrows(OdpValidationException.class, () -> OdpJson.parseServiceDocument(unknown));
+        assertEquals(
+                expected,
+                OdpJson.parseAgentServiceDocument(unknown)
+                        .protocols()
+                        .payments()
+                        .get(0)
+                        .options());
+    }
+
+    @Test
     void rejectsUnsupportedAndMalformedProtocolVersions() {
         String offering = "{\"odp_version\":\"1.0\",\"id\":\"desk\",\"name\":\"Desk\"}";
         assertEquals("1.0", OdpJson.parseOffering(offering).odpVersion());

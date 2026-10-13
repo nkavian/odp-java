@@ -58,7 +58,7 @@
     <jackson3.version>3.2.3</jackson3.version>
     <jacoco.version>0.8.15</jacoco.version>
     <java.version>17</java.version>
-    <json-schema-validator2.version>2.0.7</json-schema-validator2.version>
+    <json-schema-validator2.version>2.0.8</json-schema-validator2.version>
     <json-schema-validator3.version>3.0.7</json-schema-validator3.version>
     <junit.version>6.1.3</junit.version>
     <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>

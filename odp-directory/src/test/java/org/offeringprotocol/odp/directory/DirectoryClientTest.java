@@ -15,6 +15,9 @@ class DirectoryClientTest {
     void selectsOnlyCanonicalEnvironments() {
         assertEquals(DirectoryEnvironment.PRODUCTION, DirectoryClient.create().environment());
         assertEquals(
+                "https://directory.offeringprotocol.org",
+                DirectoryClient.create().environment().origin().toString());
+        assertEquals(
                 "https://sandbox.inflowpay.ai",
                 DirectoryClient.create(DirectoryEnvironment.SANDBOX)
                         .environment()

@@ -216,10 +216,10 @@ Select the fixed sandbox directory explicitly:
 DirectoryClient directory = DirectoryClient.create(DirectoryEnvironment.SANDBOX);
 ```
 
-| Environment | Canonical origin               |
-| ----------- | ------------------------------ |
-| Production  | `https://api.inflowpay.ai`     |
-| Sandbox     | `https://sandbox.inflowpay.ai` |
+| Environment | Canonical origin                        |
+| ----------- | --------------------------------------- |
+| Production  | `https://directory.offeringprotocol.org` |
+| Sandbox     | `https://sandbox.inflowpay.ai`            |
 
 Callers cannot configure another directory origin. The overload accepting `HttpClient` supports
 application transport policy and testing while preserving the selected canonical origin:

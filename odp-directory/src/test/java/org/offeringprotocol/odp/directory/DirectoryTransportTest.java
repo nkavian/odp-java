@@ -152,7 +152,7 @@ class DirectoryTransportTest {
                 "application/json",
                 transport.requests.get(0).headers().firstValue("Content-Type").orElseThrow());
         assertEquals(
-                "https://api.inflowpay.ai/v1/directory/suggestions",
+                "https://directory.offeringprotocol.org/v1/directory/suggestions",
                 transport.requests.get(0).uri().toString());
     }
 

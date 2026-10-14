@@ -37,8 +37,14 @@ esac
   --settings "$settings" \
   -Prelease \
   -Dgpg.skip=true \
-  -DskipPublishing=true \
+  -DskipUpload=true \
   clean deploy
+
+bundle_entries=$(jar --list --file "$root/target/central-publishing/central-bundle.zip")
+if printf '%s\n' "$bundle_entries" | grep -Eq '(^|/)(maven-metadata[^/]*|_remote\.repositories)$'; then
+  echo "Release bundle contains Maven repository metadata." >&2
+  exit 1
+fi
 
 for artifact in odp-core odp-json-jackson2 odp-json-jackson3 odp-directory odp-agent odp-service; do
   for classifier in "" -sources -javadoc; do
